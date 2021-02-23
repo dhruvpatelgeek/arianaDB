@@ -1,0 +1,9 @@
+syntax = "proto2";
+package protobuf;
+option go_package = "pb/protobuf";
+
+message KVResponse {
+  required uint32 errCode = 1;
+  optional bytes value = 2;
+  optional int32 pid = 3;
+}
