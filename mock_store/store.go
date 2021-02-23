@@ -1075,7 +1075,7 @@ func router(payload []byte,clientAddr string){
 	if(len(unmarshelled_payload.MessageID)>6) {
 		switch string(unmarshelled_payload.MessageID[0:6]) {
 		case "gossip": //gossip pre pend
-			gossipPrepend(unmarshelled_payload.Payload)
+			gossipPrepend(unmarshelled_payload.Payload,clientAddr)
 			log.Println("gossip")
 		case "reques": // node req prepend
 			nodePrePend(unmarshelled_payload.Payload,unmarshelled_payload.MessageID)
@@ -1092,8 +1092,6 @@ func router(payload []byte,clientAddr string){
 		noPrePend(unmarshelled_payload.Payload,unmarshelled_payload.MessageID,clientAddr)
 	}
 }
-
-
 
 // no pre pend
 func noPrePend(payload []byte,messageID []byte,clientAddr string) {
