@@ -1,7 +1,6 @@
 package main
 
 import (
-	"bufio"
 	"fmt"
 	"hash/crc32"
 	"dht/google_protocol_buffer/pb/protobuf"
@@ -14,6 +13,7 @@ import (
 	"math/big"
 	"crypto/sha256"
 	"dht/mock_store/storage"
+	"encoding/hex"
 
 	"github.com/golang/protobuf/proto"
 	"github.com/pmylund/go-cache"
@@ -27,17 +27,18 @@ import (
 
 //-----------------------------------------
 //CONTROL PANEL----------------------------
-var debug = true
+var debug = false
 var MEMORY_LIMIT = 51200
 var MULTI_CORE_MODE = true
 var MAP_SIZE_MB = 70
 var CACHE = 10
 var CACHE_LIFESPAN = 5 // how long should the cache persist
 
-
 const LESS    = -1
 const EQUAL   =  0
 const GREATER =  1
+
+var LOCAL_PORT string
 
 //-----------------------------------------
 
@@ -58,6 +59,10 @@ var getAllNodes = func () []string {
 	return []string {
 		"127.0.0.1:3200",
 		"127.0.0.1:3201", 
+		"127.0.0.1:3202", 
+		"127.0.0.1:3203", 
+		"127.0.0.1:3204", 
+		"127.0.0.1:3205", 
 		/*"124124124", 
 		"124124124234", 
 		"21638492872", 
@@ -147,8 +152,9 @@ var message_cache = cache.New(5*time.Second, 1*time.Nanosecond)
 			fmt.Println("found...")
 		}
 		str := fmt.Sprintf("%v", response)
-		var cached_data=[]byte(str);
-		return cached_data,true;
+		var cached_data = []byte(str)
+
+		return cached_data, true
 	}
 }
 
@@ -205,75 +211,6 @@ func calculate_checksum(a []byte, b []byte) uint64 {
 	return check_sum
 }
 
-/**
- * @Description: converts the input key into a hash
- * @param s
- * @return uint32
- */
-
-
-//-----------------------------------------
-// MESSAGE PARSING FUNC--------------------
-/**
- * @Description: peels back the message layer and searches the cache for a reacent message else calls message_handles
- * @param whole_message
- * @return []byte
- * @return bool
- */
-func message_broker(whole_message []byte) ([]byte, bool) {
-	cast_whole_req := &protobuf.Msg{
-		MessageID: nil,
-		Payload:   nil,
-		CheckSum:  0,
-	}
-
-	error := proto.Unmarshal(whole_message, cast_whole_req)
-	if error != nil {
-		fmt.Printf("\nUNPACK ERROR[W2] %+v\n", error)
-	}
-
-	if cast_whole_req.CheckSum != calculate_checksum(cast_whole_req.MessageID, cast_whole_req.Payload) {
-		fmt.Printf("\n[CHECKSUM WRONG NO RESPONSE SENT] %+v\n", error)
-		return nil, false
-	}
-	data_cached, found := check_cache(cast_whole_req.MessageID)
-	if found {
-		res_message := &protobuf.Msg{
-			MessageID: cast_whole_req.MessageID,
-			Payload:   data_cached,
-			CheckSum:  calculate_checksum(cast_whole_req.MessageID, data_cached),
-		}
-		payload, err := proto.Marshal(res_message)
-		if err != nil {
-			log.Fatalln("Failed to encode address book:", err)
-		} else {
-			if debug {
-				fmt.Printf("payload generated\n")
-			}
-		}
-		return payload, true
-
-	} else {
-		uncached_data,shouldCache := storage.Message_handler(cast_whole_req.Payload)
-		if(shouldCache){
-			cache_data(cast_whole_req.MessageID, uncached_data)
-		}
-		res_message := &protobuf.Msg{
-			MessageID: cast_whole_req.MessageID,
-			Payload:   uncached_data,
-			CheckSum:  calculate_checksum(cast_whole_req.MessageID, uncached_data),
-		}
-		payload, err := proto.Marshal(res_message)
-		if err != nil {
-			log.Fatalln("Failed to encode address book:", err)
-		}
-		return payload, true
-	}
-
-}
-
-
-
 //-----------------------------------------
 
 //UDP SERVER FUNC--------------------------
@@ -296,22 +233,6 @@ func UDP_daemon(connection *net.UDPConn, conduit chan int, thread_num int) {
 	n, remoteAddr, err = connection.ReadFromUDP(buffer)
 	conduit <- 1
 	go router(buffer[:n], remoteAddr.String())
-	/*
-	response_val, valid := message_broker(buffer[:n])
-	if valid {
-		n, err = connection.WriteToUDP(response_val, remoteAddr)
-		if err != nil {
-			fmt.Println("[FAIL] err serving ->", remoteAddr, "error is ", err)
-			fmt.Println("\n[IMP ERROR] message size was ", len(response_val))
-		}
-		if debug {
-
-			fmt.Println("THREAD EXIT->", thread_num, "\n")
-		}
-	} else {
-		fmt.Println("WRONG CHECKSUM")
-	}
-*/
 }
 
 /**
@@ -362,6 +283,9 @@ func spawn_UDP_daemon(_port string) func() {
 				switch <-conduit {
 				case 1:
 					go UDP_daemon(connection, conduit, thread_num)
+					if thread_num % 500 == 0 {
+						log.Println(" Exited thread ", thread_num)
+					}
 					thread_num++
 				case 2:
 					if debug {
@@ -411,23 +335,15 @@ func double_check(arr []byte) {
 	if error != nil {
 		fmt.Printf("\nUNPACK ERROR[W2] %+v\n", error)
 	}
+
 	if cast_whole_req.CheckSum != calculate_checksum(cast_whole_req.MessageID, cast_whole_req.Payload) {
 		fmt.Printf("\n[CHECKSUM WRONG NO RESPONSE SENT] %+v\n", error)
 	}
 
-	cast_req := &protobuf.KVResponse{
-		ErrCode: nil,
-		Value:   nil,
-		Pid:     nil,
-	}
+	cast_req := &protobuf.KVResponse{}
 	error = proto.Unmarshal(cast_whole_req.Payload, cast_req)
 	if error != nil {
 		fmt.Printf("\nUNPACK ERROR %+v\n", error)
-	} else {
-		//fmt.Println("\n XXXXX values areXXXXX \n");
-		//fmt.Println(cast_req.ErrCode);
-		//fmt.Println(cast_req.Value);
-		//fmt.Println(cast_req.Pid);
 	}
 
 }
@@ -467,32 +383,6 @@ func bToMb(b uint64) uint64 {
 }
 
 
-
-//-----------------------------------------
-//MAIN FUNCTION
-//-----------------------------------------
-func main() {
-	fmt.Println("MAIN 122")
-	argsWithProg := os.Args
-	if len(argsWithProg) != 2 {
-		fmt.Printf("INVALID NUMBER OF ARGUMENTS, EXITTING....\n")
-	} else {
-		if !check_if_port_is_valid(argsWithProg[1]) {
-			fmt.Printf("PORT NOT VALID,EXITTING...\n")
-		} else {
-			fmt.Printf("------------------\n")
-			init_server(argsWithProg[1]) // initaliaze;
-		}
-	}
-
-}
-
-
-
-//-----------------------------------------
-//MAIN FUNCTION
-//-----------------------------------------
-
 func hashDifference(key *big.Int, node *big.Int) *big.Int {
 	diff := big.NewInt(0) 
 	max := big.NewInt(0)
@@ -526,8 +416,9 @@ func hash(str string) []byte {
 	return digest[:]
 }
 
-func keyRoute(key []byte)string{
-	keyHashInt := hashInt(string(key))
+func keyRoute(key []byte) string {
+	keyHashInt := hashInt(hex.EncodeToString(key))
+	//log.Println(hex.EncodeToString(key), " Key hash", keyHashInt.String())
 
 	nodeList := getAllNodes()
 	//logger.Println(nodeList)
@@ -547,23 +438,17 @@ func keyRoute(key []byte)string{
 	return responsibleNode
 }
 
-func send(payload []byte,messageID []byte,destAddr string){
-	message,err:=generateShell(payload,messageID)
-	if(err!=nil){
+func send(payload []byte, messageID []byte, destAddr string) {
+	message, err := generateShell(payload, messageID)
+	if err != nil {
 		fmt.Println("payload gen failed");
 	}
 
 	msg := &protobuf.Msg{}
-	error:=proto.Unmarshal(message,msg);
+	error := proto.Unmarshal(message, msg)
 	if error != nil {
 		log.Println("Unable to deserialize ", error)
 	}
-	/*
-	conn, err := net.Dial("udp", address)
-	if err != nil {
-		fmt.Printf("Some error %v", err)
-		return
-	}*/
 
 	addr, err := net.ResolveUDPAddr("udp", destAddr)
 	if err != nil {
@@ -573,168 +458,89 @@ func send(payload []byte,messageID []byte,destAddr string){
 	connection.WriteToUDP(message, addr)
 }
 
-func uDPSendAsClient(payload []byte,address string,itr int,timeout int64,message_id string){
-	if(itr>3) {
-		return;
-	}
-	fmt.Printf("RETRYING REQUEST [%d]--------------------------\n",itr);
-	conn, err := net.Dial("udp", address)
-	if err != nil {
-		fmt.Printf("Some error %v", err)
-		return
-	}
-	//writing message->
-	fmt.Fprintf(conn,string(payload));
-	fmt.Printf("packet-written");
 
-	//reading RESPONSE-<
-	response_payload :=  make([]byte, 10000)
-	var byte_ctr int;
-	timeoutDuration := time.Duration(timeout) * time.Millisecond;
-	err = conn.SetReadDeadline(time.Now().Add(timeoutDuration))
-	byte_ctr, err = bufio.NewReader(conn).Read(response_payload)
-	if e,ok := err.(net.Error); ok && e.Timeout() {
-		fmt.Printf("\nTIMEOUT after %v\n",timeoutDuration)
-		conn.Close();
-		if(itr<3){
-			uDPSendAsClient(payload,address,itr+1,timeout+100,message_id);
-		}
-		return
-	}else if err != nil {
-		fmt.Println("\n[ERROR] reading\n",err);
-		conn.Close();
-		return
-	} else {
-		fmt.Printf("packet-received:\n bytes=%d \nfrom=%s\n",byte_ctr,address);
-		fmt.Printf("\n>>>>>>>REPLY FORM SERVER[SUCCESS]\n")
-		cast_response:=&protobuf.Msg{
-			MessageID: nil,
-			Payload:   nil,
-			CheckSum:  0,
-		}
-		error:=proto.Unmarshal(response_payload[:byte_ctr],cast_response);
-		if(error!=nil) {
-			fmt.Printf("\n[e2e3]UNPACK ERROR %+v\n",error)
-		}
-		local_checksum:=calculate_checksum(cast_response.GetMessageID(),cast_response.GetPayload());
-		var flag=false;
-		if(local_checksum!=cast_response.GetCheckSum()){
-			fmt.Printf("\n[CHECKSUM WRONG]\n")
-			flag=true;
-		}
-		if(flag){
-			if(itr<3) {
-				fmt.Printf("\n[RETRYING]\n")
-				uDPSendAsClient(payload,address,itr+1,timeout+100,message_id);
-			}
-		} else{
-			server_response:=cast_response.GetPayload();
-			res_struct:=&protobuf.KVResponse{
-				ErrCode: nil,
-				Value:   nil,
-				Pid:     nil,
-			}
-			error=proto.Unmarshal(server_response,res_struct);
-			if(res_struct.GetErrCode()==0){
-				fmt.Printf("\nVALLUE WRITTEN SUCESSFULLY\n----------");
-				fmt.Printf("value written is \"%+v\"",string(res_struct.GetValue()));
-			} else {
-				fmt.Println("\n[SERVER ERROR]satellite internal server error ",res_struct.GetErrCode());
-				if(itr<3) {
-					fmt.Printf("\n[RETRYING]\n")
-					uDPSendAsClient(payload,address,itr+1,timeout+100,message_id);
-				}
-			}
-		}
-		conn.Close();
-		return
-	}
-	return
-}
-func generateShell(payload []byte,messageId []byte) ([]byte,error){
-	checksum:=calculate_checksum([]byte(messageId),payload)
-	shell:=&protobuf.Msg{
+
+func generateShell(payload []byte, messageId []byte) ([]byte, error){
+	checksum := calculate_checksum([]byte(messageId), payload)
+	shell := &protobuf.Msg{
 		MessageID: messageId,
 		Payload:   payload,
 		CheckSum:  checksum,
 	}
-	marshelledShell,err:=proto.Marshal(shell)
+	marshelledShell, err := proto.Marshal(shell)
 
-	if (err!=nil){
+	if err != nil {
 		fmt.Println("[crtitcal] protobuf marshall error")
 	}
-	return marshelledShell,err;
+
+	return marshelledShell, err
 }
 
-func router(payload []byte,clientAddr string){
+func router(serialMsg []byte, clientAddr string){
 
-	unmarshelled_payload:=&protobuf.Msg{
-		MessageID: nil,
-		Payload:   nil,
-		CheckSum:  0,
-	}
-	proto.Unmarshal(payload,unmarshelled_payload)
+	msg := &protobuf.Msg{}
+	proto.Unmarshal(serialMsg, msg)
 
-	if(len(unmarshelled_payload.MessageID)>6) {
-		switch string(unmarshelled_payload.MessageID[0:6]) {
+	messageID := msg.GetMessageID()
+	payload := msg.GetPayload()
+
+	if len(messageID) > 6 {
+		switch string(messageID[0:6]) {
 		case "gossip": //gossip pre pend
-			gossipPrepend(unmarshelled_payload.Payload,clientAddr)
-			log.Println("gossip")
+			gossipPrepend(payload, clientAddr)
+			//log.Println("gossip")
 		case "reques": // node req prepend
-			nodePrePend(unmarshelled_payload.Payload,unmarshelled_payload.MessageID[6:])
-			log.Println("reques")
+			nodePrePend(payload, messageID[6:])
+			//log.Println("reques")
 		case "respos": //resposnse prepend
-			resPrepend(unmarshelled_payload.Payload,unmarshelled_payload.MessageID[6:])
-			log.Println("respos")
+			resPrepend(payload, messageID[6:])
+			//log.Println("respos")
 		default: // no pre pend
 			//log.Println("default-> no prepend")
-			noPrePend(unmarshelled_payload.Payload,unmarshelled_payload.MessageID,clientAddr)
+			noPrePend(payload, messageID, clientAddr)
 		}
 	} else {
-		log.Println("default-> no prepend")
-		noPrePend(unmarshelled_payload.Payload,unmarshelled_payload.MessageID,clientAddr)
+		//log.Println("default-> no prepend")
+		noPrePend(payload, messageID, clientAddr)
 	}
 }
-
-const LOCAL_PORT = "3201"
 
 // no pre pend
-func noPrePend(payload []byte,messageID []byte,clientAddr string) {
-	//	func keyRoute(key []byte)string
-	//	func send(paylod []byte,messageID string,dest_addr string)
-	where_to_send:=keyRoute(payload)
-	//argsWithProg := os.Args
-	if(where_to_send=="127.0.0.1:" + LOCAL_PORT){
-		response, found := message_cache.Get(string(messageID))
-		if found{
-			str := fmt.Sprintf("%v", response)
-			var cached_data=[]byte(str);
-			send(cached_data,messageID,clientAddr)
+func noPrePend(payload []byte, messageID []byte, clientAddr string) {
+	cachedResponse, found := check_cache(messageID)
 
-		} else {
-			response_to_send,shouldCache:=storage.Message_handler(payload);
-			if shouldCache{
-				message_cache.Add(string(messageID),response_to_send,5*time.Second)
-			}
-			send(response_to_send,messageID,clientAddr)
-		}
+	if found {
+		send(cachedResponse, messageID, clientAddr)
 	} else {
-		internalPayload:=&protobuf.InternalMsg{
-			ClientAddr: clientAddr,
-			OriginAddr: "127.0.0.1:" + LOCAL_PORT,
-			Payload:    payload,
-		}
-		marshalled_internalPayload,err:=proto.Marshal(internalPayload)
-		if(err!=nil){
-			log.Println("[ERTICAL CASTINF ERROR][234]")
-		} else {
-			send(marshalled_internalPayload, append([]byte("reques"), messageID...), where_to_send)
+		kvreq := &protobuf.KVRequest{}
+		error := proto.Unmarshal(payload, kvreq)
+		if error != nil {
+			log.Println("UNPACK ERROR ", error)
 		}
 
+		destAddr := keyRoute(kvreq.GetKey())
+		//argsWithProg := os.Args
+		if (destAddr == "127.0.0.1:" + LOCAL_PORT){
+			response, _ := storage.Message_handler(payload)
+			cache_data(messageID, response)
+			send(response, messageID, clientAddr)
+		} else {
+			internalPayload := &protobuf.InternalMsg{
+				ClientAddr: clientAddr,
+				OriginAddr: "127.0.0.1:" + LOCAL_PORT,
+				Payload:    payload,
+			}
+			marshalled_internalPayload, err := proto.Marshal(internalPayload)
+			if err != nil {
+				log.Println("[ERTICAL CASTINF ERROR][234]")
+			} else {
+				send(marshalled_internalPayload, append([]byte("reques"), messageID...), destAddr)
+			}
+		}
 	}
 }
 
-func gossipPrepend(payload []byte,clientAddr string){
+func gossipPrepend(payload []byte, clientAddr string) {
 	unmarshelled_payload:=&protobuf.Msg{}
 	proto.Unmarshal(payload,unmarshelled_payload)
 
@@ -748,34 +554,65 @@ func gossipPrepend(payload []byte,clientAddr string){
 }
 
 // node req prepend
-func nodePrePend(node_to_node_payload []byte,messageID []byte){
-	unmarshelled_node_to_node_payload := &protobuf.InternalMsg{}
+func nodePrePend(node2nodePayload []byte, messageID []byte){
+	node2nodeMsg := &protobuf.InternalMsg{}
 
-	proto.Unmarshal(node_to_node_payload, unmarshelled_node_to_node_payload)
-	payload_gen, _ := storage.Message_handler(unmarshelled_node_to_node_payload.Payload)
+	proto.Unmarshal(node2nodePayload, node2nodeMsg)
 
-	internalPayload:=&protobuf.InternalMsg{
-		ClientAddr: unmarshelled_node_to_node_payload.GetClientAddr(),
-		Payload:    payload_gen,
+	clientAddr := node2nodeMsg.GetClientAddr()
+	reqPayload := node2nodeMsg.GetPayload()
+	originAddr := node2nodeMsg.GetOriginAddr()
+
+	cachedResponse, found := check_cache(messageID)
+	if found {
+		send(cachedResponse, messageID, clientAddr)
+	} else {
+		response, _ := storage.Message_handler(reqPayload)
+		cache_data(messageID, response)
+
+		responseMsg := &protobuf.InternalMsg {
+			ClientAddr: clientAddr,
+			Payload:    response,
+		}
+
+		internalPayload, err := proto.Marshal(responseMsg)
+		if err != nil {
+			log.Println("[ERTICAL CASTINF ERROR][234]")
+		}
+
+		send(internalPayload, append([]byte("respos"), messageID...), originAddr)
 	}
-	marshalled_internalPayload, err:=proto.Marshal(internalPayload)
-	if(err!=nil){
-		log.Println("[ERTICAL CASTINF ERROR][234]")
-	}
-
-	send(marshalled_internalPayload, append([]byte("respos"), messageID...), unmarshelled_node_to_node_payload.OriginAddr)
-	// call the storage.Message_handler
-	// then send to the origin node
-
 }
 
-func resPrepend(internalPayload []byte,messageID []byte){
+func resPrepend(node2nodePayload []byte, messageID []byte){
 	// send the internalPayload to the client
-	unmarshelled_node_to_node_payload:=&protobuf.InternalMsg{}
-	proto.Unmarshal(internalPayload,unmarshelled_node_to_node_payload)
+	node2nodeMsg := &protobuf.InternalMsg{}
+	proto.Unmarshal(node2nodePayload, node2nodeMsg)
 
-	send(unmarshelled_node_to_node_payload.Payload, messageID, unmarshelled_node_to_node_payload.ClientAddr)
+	response := node2nodeMsg.GetPayload()
+
+	cache_data(messageID, response)
+	send(response, messageID, node2nodeMsg.GetClientAddr())
 }
 
+//-----------------------------------------
+//MAIN FUNCTION
+//-----------------------------------------
+func main() {
+	fmt.Println("MAIN 122")
+	argsWithProg := os.Args
+	if len(argsWithProg) != 2 {
+		fmt.Printf("INVALID NUMBER OF ARGUMENTS, EXITTING....\n")
+	} else {
+		if !check_if_port_is_valid(argsWithProg[1]) {
+			fmt.Printf("PORT NOT VALID,EXITTING...\n")
+		} else {
+			fmt.Printf("------------------\n")
+			LOCAL_PORT = argsWithProg[1]
+			init_server(argsWithProg[1]) // initaliaze;
+		}
+	}
+
+}
 
 //-----------------------------------------

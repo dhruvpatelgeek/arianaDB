@@ -8,6 +8,7 @@ import (
 	"sync"
 	"syscall"
 	"unsafe"
+	//"encoding/hex"
 
 	"github.com/golang/protobuf/proto"
 )
@@ -21,6 +22,25 @@ import (
 //CONTROL PANEL----------------------------
 var debug = false
 var MAP_SIZE_MB = 70
+
+// Command numbers
+const PUT      = 1
+const GET      = 2
+const REMOVE   = 3
+const SHUTDOWN = 4
+const WIPEOUT  = 5
+const IS_ALIVE = 6
+const GET_PID  = 7
+const GET_MC   = 8
+
+// Error codes
+const OK        = 0
+const NO_KEY    = 1
+const NO_SPACE  = 2
+const SYS_OVRLD = 3
+const UNKWN_CMD = 5
+const INV_KEY   = 6
+const INV_VAL   = 7
 
 //MAP_AND_CACHE----------------------------
 var storage = make(map[string][]byte)
@@ -39,81 +59,27 @@ var mutex sync.Mutex
 		fmt.Printf("\nUNPACK ERROR %+v\n", error)
 	}
 
-	//* 0x01 - Put: This is a put operation.
-	//* 0x02 - Get: This is a get operation.
-	//* 0x03 - Remove: This is a remove operation.
-	//* 0x04 - Shutdown: shuts-down the node (used for testing and management).
-	//* 0x05 - Wipeout: deletes all keys stored in the node (used for testing).
-	//* 0x06 - IsAlive: does nothing but replies with success if the node is alive.
-	//* 0x07 - GetPID: the node is expected to reply with the processID of the Go process
-	//* 0x08 - GetMembershipCount:(This will be used later, for now you are expected to return 1.)
-
 	switch cast_req.GetCommand() {
-	case 1:
-		{
-			if debug {
-				fmt.Println("PUT")
-			}
-			return put(cast_req.GetKey(), cast_req.GetValue(), cast_req.GetVersion()), false
-		}
-	case 2:
-		{
-			if debug {
-				fmt.Println("GET")
-			}
-			return get(cast_req.Key), false
-		}
-	case 3:
-		{
-			if debug {
-				fmt.Println("REMOVE")
-			}
-			return remove(cast_req.Key), true
-		}
-	case 4:
-		{
-			if debug {
-				fmt.Println("SHUTDOWN")
-			}
-			fmt.Println("[TERMINATING]....")
-			shutdown()
-		}
-	case 5:
-		{
-			if debug {
-				fmt.Println("WIPEOUT")
-			}
-			return wipeout(), true
-		}
-	case 6:
-		{
-			if debug {
-				fmt.Println("IsALIVE")
-			}
-			return is_alive(), true
-		}
-	case 7:
-		{
-			if debug {
-				fmt.Println("GetPID")
-			}
-			return getpid(), true
-		}
-	case 8:
-		{
-			if debug {
-				fmt.Println("GetMembershipCount")
-			}
-			return getmemcount(), true
-		}
+	case PUT:
+		return put(cast_req.GetKey(), cast_req.GetValue(), cast_req.GetVersion()), false
+	case GET:
+		return get(cast_req.Key), false
+	case REMOVE:
+		return remove(cast_req.Key), true
+	case SHUTDOWN:
+		shutdown()
+	case WIPEOUT:
+		return wipeout(), true
+	case IS_ALIVE:
+		return is_alive(), true
+	case GET_PID:
+		return getpid(), true
+	case GET_MC:
+		return getmemcount(), true
 	default:
-		{
-			if debug {
-				fmt.Println("INVALID COMMAND")
-			}
-			return message, true
-		}
+		return message, true
 	}
+
 	return is_alive(), true
 }
 
@@ -130,23 +96,11 @@ var mutex sync.Mutex
  * @return []byte
  */
 func put(key []byte, value []byte, version int32) []byte {
-	var error_code uint32 = 0
-	error_code = 0
+	var errCode uint32 = OK
 	if int(len(value)) > 10000 {
-		error_code = 7
-		var err_code *uint32
-		err_code = new(uint32)
-		err_code = &error_code
+		errCode = INV_VAL
 
-		var _pid *int32
-		_pid = new(int32)
-		procress_id := int32(syscall.Getpid())
-		_pid = &procress_id
-		payload := &protobuf.KVResponse{
-			ErrCode: err_code,
-			Value:   nil, // edited
-			Pid:     _pid,
-		}
+		payload := &protobuf.KVResponse{ErrCode: &errCode}
 		out, err := proto.Marshal(payload)
 		if err != nil {
 			log.Fatalln("Failed to encode address book:", err)
@@ -158,8 +112,8 @@ func put(key []byte, value []byte, version int32) []byte {
 
 	if bToMb(uint64(unsafe.Sizeof(storage))) < uint64(MAP_SIZE_MB) {
 
+	//log.Println("PUT ", hex.EncodeToString(value), " at ", hex.EncodeToString(key))
 		storage[string(key)] = value // adding the value
-		error_code = 0
 		if debug {
 			fmt.Println("PUT", string(key), ",<->", string(value))
 		}
@@ -167,30 +121,17 @@ func put(key []byte, value []byte, version int32) []byte {
 		if debug {
 			fmt.Println("ERROR PUTTING")
 		}
-		error_code = 2
+		errCode = NO_SPACE
 	}
 	mutex.Unlock() //<<<<<<<<<<<<<<<MAP UNLOCK
 
-	var err_code *uint32
-	err_code = new(uint32)
-	err_code = &error_code
-
-	var _pid *int32
-	_pid = new(int32)
-	procress_id := int32(syscall.Getpid())
-	_pid = &procress_id
 	payload := &protobuf.KVResponse{
-		ErrCode: err_code,
+		ErrCode: &errCode,
 		Value:   value,
-		Pid:     _pid,
 	}
 	out, err := proto.Marshal(payload)
 	if err != nil {
 		log.Fatalln("Failed to encode address book:", err)
-	} else {
-		if debug {
-			//fmt.Printf("NEW BUFFER-> %+v",out);
-		}
 	}
 
 	return out
@@ -204,34 +145,20 @@ func put(key []byte, value []byte, version int32) []byte {
 func get(key []byte) []byte {
 	mutex.Lock()
 	value, found := storage[string(key)]
+	//log.Println("GET ", hex.EncodeToString(value), " from ", hex.EncodeToString(key))
 	mutex.Unlock()
-	var error_code uint32
-	if found {
-		error_code = 0
-	} else {
-		error_code = 1
+	var errCode uint32 = OK
+	if !found {
+		errCode = NO_KEY
 	}
 
-	var err_code *uint32
-	err_code = new(uint32)
-	err_code = &error_code
-
-	var _pid *int32
-	_pid = new(int32)
-	procress_id := int32(syscall.Getpid())
-	_pid = &procress_id
 	payload := &protobuf.KVResponse{
-		ErrCode: err_code,
+		ErrCode: &errCode,
 		Value:   value,
-		Pid:     _pid,
 	}
 	out, err := proto.Marshal(payload)
 	if err != nil {
 		log.Fatalln("Failed to encode address book:", err)
-	} else {
-		if debug {
-			//fmt.Printf("NEW BUFFER-> %+v",out);
-		}
 	}
 
 	return out
@@ -243,62 +170,37 @@ func get(key []byte) []byte {
  * @return []byte
  */
 func remove(key []byte) []byte {
+	var errCode uint32 = OK
+
 	mutex.Lock()
 	value, found := storage[string(key)]
+
 	if found {
 		delete(storage, string(key))
-	}
-	mutex.Unlock()
-	if found {
-		var error_code uint32
-		error_code = 0
-		var err_code *uint32
-		err_code = new(uint32)
-		err_code = &error_code
+		mutex.Unlock()
 
-		var _pid *int32
-		_pid = new(int32)
-		procress_id := int32(syscall.Getpid())
-		_pid = &procress_id
 		payload := &protobuf.KVResponse{
-			ErrCode: err_code,
+			ErrCode: &errCode,
 			Value:   value,
-			Pid:     _pid,
 		}
+
 		out, err := proto.Marshal(payload)
 		if err != nil {
 			log.Fatalln("Failed to encode address book:", err)
-		} else {
-			if debug {
-				//fmt.Printf("NEW BUFFER-> %+v",out);
-			}
 		}
 
 		return out
 
 	} else {
-		var error_code uint32
-		error_code = 1
-		var err_code *uint32
-		err_code = new(uint32)
-		err_code = &error_code
+		errCode = NO_KEY
 
-		var _pid *int32
-		_pid = new(int32)
-		procress_id := int32(syscall.Getpid())
-		_pid = &procress_id
 		payload := &protobuf.KVResponse{
-			ErrCode: err_code,
+			ErrCode: &errCode,
 			Value:   value,
-			Pid:     _pid,
 		}
 		out, err := proto.Marshal(payload)
 		if err != nil {
 			log.Fatalln("Failed to encode address book:", err)
-		} else {
-			if debug {
-				//fmt.Printf("NEW BUFFER-> %+v",out);
-			}
 		}
 
 		return out
@@ -322,26 +224,12 @@ func wipeout() []byte {
 		delete(storage, k)
 	}
 	mutex.Unlock() //<<<<<<<<<<<<<<<MAP UNLOCK
-	var error_code uint32
-	var err_code *uint32
-	err_code = new(uint32)
-	err_code = &error_code
+	var errCode uint32 = OK
 
-	var _pid *int32
-	_pid = new(int32)
-	procress_id := int32(syscall.Getpid())
-	_pid = &procress_id
-	payload := &protobuf.KVResponse{
-		ErrCode: err_code,
-		Pid:     _pid,
-	}
+	payload := &protobuf.KVResponse{ErrCode: &errCode}
 	out, err := proto.Marshal(payload)
 	if err != nil {
 		log.Fatalln("Failed to encode address book:", err)
-	} else {
-		if debug {
-			//fmt.Printf("NEW BUFFER-> %+v",out);
-		}
 	}
 
 	return out
@@ -354,29 +242,14 @@ func wipeout() []byte {
 func is_alive() []byte {
 	fmt.Println("CLIENT ASKED IF SERVER ALIVE")
 
-	var error_code uint32
-	error_code = 0
+	var errCode uint32 = OK
 
-	var err_code *uint32
-	err_code = new(uint32)
-	err_code = &error_code
-
-	var _pid *int32
-	_pid = new(int32)
-	procress_id := int32(syscall.Getpid())
-	_pid = &procress_id
-	payload := &protobuf.KVResponse{
-		ErrCode: err_code,
-		Pid:     _pid,
-	}
+	payload := &protobuf.KVResponse{ErrCode: &errCode}
 	out, err := proto.Marshal(payload)
 	if err != nil {
 		log.Fatalln("Failed to encode address book:", err)
-	} else {
-		if debug {
-			//fmt.Printf("NEW BUFFER-> %+v",out);
-		}
 	}
+
 	return out
 }
 
@@ -385,29 +258,19 @@ func is_alive() []byte {
  * @return []byte
  */
 func getpid() []byte {
-	var error_code uint32
-	error_code = 0
+	var errCode uint32 = OK
 
-	var err_code *uint32
-	err_code = new(uint32)
-	err_code = &error_code
-
-	var _pid *int32
-	_pid = new(int32)
-	procress_id := int32(syscall.Getpid())
-	_pid = &procress_id
+	pid := int32(syscall.Getpid())
 	payload := &protobuf.KVResponse{
-		ErrCode: err_code,
-		Pid:     _pid,
+		ErrCode: &errCode,
+		Pid:     &pid,
 	}
+
 	out, err := proto.Marshal(payload)
 	if err != nil {
 		log.Fatalln("Failed to encode address book:", err)
-	} else {
-		if debug {
-			//fmt.Printf("NEW BUFFER-> %+v",out);
-		}
 	}
+
 	return out
 }
 
@@ -416,29 +279,15 @@ func getpid() []byte {
  * @return []byte
  */
 func getmemcount() []byte {
-	var error_code uint32
-	error_code = 0
+	var errCode uint32 = OK
 
-	var err_code *uint32
-	err_code = new(uint32)
-	err_code = &error_code
+	payload := &protobuf.KVResponse{ErrCode: &errCode}
 
-	var _pid *int32
-	_pid = new(int32)
-	procress_id := int32(syscall.Getpid())
-	_pid = &procress_id
-	payload := &protobuf.KVResponse{
-		ErrCode: err_code,
-		Pid:     _pid,
-	}
 	out, err := proto.Marshal(payload)
 	if err != nil {
 		log.Fatalln("Failed to encode address book:", err)
-	} else {
-		if debug {
-			//fmt.Printf("NEW BUFFER-> %+v",out);
-		}
 	}
+
 	return out
 }
 
