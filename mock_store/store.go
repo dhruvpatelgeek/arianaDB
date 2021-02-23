@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bufio"
 	"fmt"
 	"hash/crc32"
 	"hash/google_protocol_buffer/pb/protobuf"
@@ -44,8 +45,15 @@ const GREATER =  1
 
 //CONNECTION-------------------------------
 
+type Message struct {
+	ClientAddr string
+	Payload    []byte
+	MessageID  string
+}
+
 var connection *net.UDPConn
 
+var GroupSend = make(chan Message)
 //------------------------------------------
 
 var getAllNodes = func () []string {
@@ -955,41 +963,205 @@ func keyRoute(key []byte)string{
 	return responsibleNode
 }
 
-func send(paylod []byte,messageID string,dest_addr string){
+func send(payload []byte,messageID []byte,destAddr string){
+	message,err:=generateShell(payload,messageID)
+	if(err!=nil){
+		fmt.Println("payload gen failed");
+	}
+	uDPSendAsClient(message,destAddr,0,100,string(messageID));
+}
+func uDPSendAsClient(payload []byte,address string,itr int,timeout int64,message_id string){
+	if(itr>3) {
+		return;
+	}
+	fmt.Printf("RETRYING REQUEST [%d]--------------------------\n",itr);
+	conn, err := net.Dial("udp", address)
+	if err != nil {
+		fmt.Printf("Some error %v", err)
+		return
+	}
+	//writing message->
+	fmt.Fprintf(conn,string(payload));
+	fmt.Printf("packet-written");
 
+	//reading RESPONSE-<
+	response_payload :=  make([]byte, 10000)
+	var byte_ctr int;
+	timeoutDuration := time.Duration(timeout) * time.Millisecond;
+	err = conn.SetReadDeadline(time.Now().Add(timeoutDuration))
+	byte_ctr, err = bufio.NewReader(conn).Read(response_payload)
+	if e,ok := err.(net.Error); ok && e.Timeout() {
+		fmt.Printf("\nTIMEOUT after %v\n",timeoutDuration)
+		conn.Close();
+		if(itr<3){
+			uDPSendAsClient(payload,address,itr+1,timeout+100,message_id);
+		}
+		return
+	}else if err != nil {
+		fmt.Println("\n[ERROR] reading\n",err);
+		conn.Close();
+		return
+	} else {
+		fmt.Printf("packet-received:\n bytes=%d \nfrom=%s\n",byte_ctr,address);
+		fmt.Printf("\n>>>>>>>REPLY FORM SERVER[SUCCESS]\n")
+		cast_response:=&protobuf.Msg{
+			MessageID: nil,
+			Payload:   nil,
+			CheckSum:  0,
+		}
+		error:=proto.Unmarshal(response_payload[:byte_ctr],cast_response);
+		if(error!=nil) {
+			fmt.Printf("\n[e2e3]UNPACK ERROR %+v\n",error)
+		}
+		local_checksum:=calculate_checksum(cast_response.GetMessageID(),cast_response.GetPayload());
+		var flag=false;
+		if(local_checksum!=cast_response.GetCheckSum()){
+			fmt.Printf("\n[CHECKSUM WRONG]\n")
+			flag=true;
+		}
+		if(flag){
+			if(itr<3) {
+				fmt.Printf("\n[RETRYING]\n")
+				uDPSendAsClient(payload,address,itr+1,timeout+100,message_id);
+			}
+		} else{
+			server_response:=cast_response.GetPayload();
+			res_struct:=&protobuf.KVResponse{
+				ErrCode: nil,
+				Value:   nil,
+				Pid:     nil,
+			}
+			error=proto.Unmarshal(server_response,res_struct);
+			if(res_struct.GetErrCode()==0){
+				fmt.Printf("\nVALLUE WRITTEN SUCESSFULLY\n----------");
+				fmt.Printf("value written is \"%+v\"",string(res_struct.GetValue()));
+			} else {
+				fmt.Println("\n[SERVER ERROR]satellite internal server error ",res_struct.GetErrCode());
+				if(itr<3) {
+					fmt.Printf("\n[RETRYING]\n")
+					uDPSendAsClient(payload,address,itr+1,timeout+100,message_id);
+				}
+			}
+		}
+		conn.Close();
+		return
+	}
 	return
+}
+func generateShell(payload []byte,messageId []byte) ([]byte,error){
+	checksum:=calculate_checksum([]byte(messageId),payload)
+	shell:=&protobuf.Msg{
+		MessageID: messageId,
+		Payload:   payload,
+		CheckSum:  checksum,
+	}
+	marshelledShell,err:=proto.Marshal(shell)
+
+	if (err!=nil){
+		fmt.Println("[crtitcal] protobuf marshall error")
+	}
+	return marshelledShell,err;
 }
 
 func router(payload []byte,clientAddr string){
 
-	// no pre pend
+	unmarshelled_payload:=&protobuf.Msg{
+		MessageID: nil,
+		Payload:   nil,
+		CheckSum:  0,
+	}
+	proto.Unmarshal(payload,unmarshelled_payload)
 
-	//gossip pre pend
-
-	// node req prepend
-
-	//resposnse prepend
-	return
+	if(len(unmarshelled_payload.MessageID)>6) {
+		switch string(unmarshelled_payload.MessageID[0:6]) {
+		case "gossip": //gossip pre pend
+			gossipPrepend(unmarshelled_payload.Payload)
+			log.Println("gossip")
+		case "reques": // node req prepend
+			nodePrePend(unmarshelled_payload.Payload,unmarshelled_payload.MessageID)
+			log.Println("reques")
+		case "respos": //resposnse prepend
+			resPrepend(unmarshelled_payload.Payload,unmarshelled_payload.MessageID)
+			log.Println("respos")
+		default: // no pre pend
+			log.Println("default-> no prepend")
+			noPrePend(unmarshelled_payload.Payload,unmarshelled_payload.MessageID,clientAddr)
+		}
+	} else {
+		log.Println("default-> no prepend")
+		noPrePend(unmarshelled_payload.Payload,unmarshelled_payload.MessageID,clientAddr)
+	}
 }
+
+
 
 // no pre pend
-func noPrePend(payload []byte,messageID string,clientAddr string) {
+func noPrePend(payload []byte,messageID []byte,clientAddr string) {
 	//	func keyRoute(key []byte)string
 	//	func send(paylod []byte,messageID string,dest_addr string)
+	where_to_send:=keyRoute(payload)
+	argsWithProg := os.Args
+	if(where_to_send=="127.0.0.1"+argsWithProg[1]){
+		response, found := message_cache.Get(string(messageID))
+		if found{
+			str := fmt.Sprintf("%v", response)
+			var cached_data=[]byte(str);
+			send(cached_data,messageID,clientAddr)
+
+		} else {
+			response_to_send,shouldCache:=message_handler(payload);
+			if shouldCache{
+				message_cache.Add(string(messageID),response_to_send,5*time.Second)
+			}
+			send(response_to_send,messageID,clientAddr)
+		}
+
+	}
 }
 
-func gossipPrepend(payload []byte){
-	// trigger the gossip chanel
+func gossipPrepend(payload []byte,clientAddr string){
+	unmarshelled_payload:=&protobuf.Msg{
+		MessageID: nil,
+		Payload:   nil,
+		CheckSum:  0,
+	}
+	proto.Unmarshal(payload,unmarshelled_payload)
+
+	struct_to_push:=Message{
+		ClientAddr: clientAddr,
+		Payload:    unmarshelled_payload.Payload,
+		MessageID:  string(unmarshelled_payload.MessageID),
+	}
+	GroupSend<-struct_to_push;
 }
 
 // node req prepend
-func nodePrePend(payload []byte,messageID string){
-	// call the messaage_handler
+func nodePrePend(node_to_node_payload []byte,messageID []byte){
+	unmarshelled_node_to_node_payload:=&protobuf.InternalMsg{
+		ClientAddr: "",
+		OriginAddr: "",
+		Payload:    nil,
+	}
+	proto.Unmarshal(node_to_node_payload,unmarshelled_node_to_node_payload)
+	payload_gen,_:=message_handler(unmarshelled_node_to_node_payload.Payload)
+	send(payload_gen,messageID,unmarshelled_node_to_node_payload.OriginAddr)
+	// call the message_handler
 	// then send to the origin node
+
 }
 
-func  resPrepend( internalPayload []byte,messageID string){
+func  resPrepend( internalPayload []byte,messageID []byte){
 	// send the internalPayload to the client
+	unmarshelled_node_to_node_payload:=&protobuf.InternalMsg{
+		ClientAddr: "",
+		OriginAddr: "",
+		Payload:    nil,
+	}
+	proto.Unmarshal(internalPayload,unmarshelled_node_to_node_payload)
+
+
+	send(unmarshelled_node_to_node_payload.Payload,messageID,unmarshelled_node_to_node_payload.ClientAddr)
+
 }
 
 
