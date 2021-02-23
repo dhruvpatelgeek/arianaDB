@@ -252,6 +252,7 @@ func message_handler(message []byte) ([]byte,bool) {
 	//* 0x06 - IsAlive: does nothing but replies with success if the node is alive.
 	//* 0x07 - GetPID: the node is expected to reply with the processID of the Go process
 	//* 0x08 - GetMembershipCount:(This will be used later, for now you are expected to return 1.)
+
 	switch cast_req.GetCommand() {
 	case 1:
 		{
@@ -712,7 +713,8 @@ func UDP_daemon(connection *net.UDPConn, conduit chan int, thread_num int) {
 	}
 	n, remoteAddr, err = connection.ReadFromUDP(buffer)
 	conduit <- 1
-		//router()
+	go router(buffer[:n], remoteAddr.String())
+	/*
 	response_val, valid := message_broker(buffer[:n])
 	if valid {
 		n, err = connection.WriteToUDP(response_val, remoteAddr)
@@ -727,7 +729,7 @@ func UDP_daemon(connection *net.UDPConn, conduit chan int, thread_num int) {
 	} else {
 		fmt.Println("WRONG CHECKSUM")
 	}
-
+*/
 }
 
 /**
