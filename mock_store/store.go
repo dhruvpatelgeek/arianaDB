@@ -1115,6 +1115,18 @@ func noPrePend(payload []byte,messageID []byte,clientAddr string) {
 			}
 			send(response_to_send,messageID,clientAddr)
 		}
+	} else {
+		internalPayload:=&protobuf.InternalMsg{
+			ClientAddr: clientAddr,
+			OriginAddr: "127.0.0.1"+argsWithProg[1],
+			Payload:    payload,
+		}
+		marshalled_internalPayload,err:=proto.Marshal(internalPayload)
+		if(err!=nil){
+			log.Println("[ERTICAL CASTINF ERROR][234]")
+		}else {
+			send(marshalled_internalPayload,messageID,clientAddr)
+		}
 
 	}
 }
