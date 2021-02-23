@@ -58,7 +58,8 @@ var GroupSend = make(chan Message)
 
 var getAllNodes = func () []string {
 	return []string {
-		"0.0.0.0:8888", 
+		"127.0.0.1:3200",
+		/*"127.0.0.1:3201", 
 		"124124124", 
 		"124124124234", 
 		"21638492872", 
@@ -81,7 +82,7 @@ var getAllNodes = func () []string {
 		"31tt3q3vt3qc",
 		"31tt3q3vt3qc",
 		"31tt3q3vt3qc",
-		"31tt3q3vt3qc",
+		"31tt3q3vt3qc",*/
 	}
 }
 
@@ -749,7 +750,7 @@ func spawn_UDP_daemon(_port string) func() {
 	fmt.Println("ADDRESS IS", address.IP, ":", address.Port)
 	return func() {
 		var thread_num int = 0
-		connection, err := net.ListenUDP("udp", &address)
+		connection, err = net.ListenUDP("udp", &address)
 		err = connection.SetWriteBuffer(20000)
 		if err != nil {
 			fmt.Printf("[WRITE SETTING ERROR]%+v", err)
@@ -970,8 +971,27 @@ func send(payload []byte,messageID []byte,destAddr string){
 	if(err!=nil){
 		fmt.Println("payload gen failed");
 	}
-	uDPSendAsClient(message,destAddr,0,100,string(messageID));
+
+	msg := &protobuf.Msg{}
+	error:=proto.Unmarshal(message,msg);
+	if error != nil {
+		log.Println("Unable to deserialize ", error)
+	}
+	/*
+	conn, err := net.Dial("udp", address)
+	if err != nil {
+		fmt.Printf("Some error %v", err)
+		return
+	}*/
+
+	addr, err := net.ResolveUDPAddr("udp", destAddr)
+	if err != nil {
+		log.Println("Address error ", err)
+	}
+
+	connection.WriteToUDP(message, addr)
 }
+
 func uDPSendAsClient(payload []byte,address string,itr int,timeout int64,message_id string){
 	if(itr>3) {
 		return;
@@ -1086,7 +1106,7 @@ func router(payload []byte,clientAddr string){
 			resPrepend(unmarshelled_payload.Payload,unmarshelled_payload.MessageID)
 			log.Println("respos")
 		default: // no pre pend
-			log.Println("default-> no prepend")
+			//log.Println("default-> no prepend")
 			noPrePend(unmarshelled_payload.Payload,unmarshelled_payload.MessageID,clientAddr)
 		}
 	} else {
@@ -1101,7 +1121,8 @@ func noPrePend(payload []byte,messageID []byte,clientAddr string) {
 	//	func send(paylod []byte,messageID string,dest_addr string)
 	where_to_send:=keyRoute(payload)
 	argsWithProg := os.Args
-	if(where_to_send=="127.0.0.1"+argsWithProg[1]){
+	//log.Println("Destination ", where_to_send)
+	if(where_to_send=="127.0.0.1:3200"){
 		response, found := message_cache.Get(string(messageID))
 		if found{
 			str := fmt.Sprintf("%v", response)
