@@ -13,6 +13,8 @@ import (
 	"syscall"
 	"time"
 	"unsafe"
+	"math/big"
+	"crypto/sha256"
 
 	"github.com/golang/protobuf/proto"
 	"github.com/pmylund/go-cache"
@@ -33,6 +35,11 @@ var MAP_SIZE_MB = 70
 var CACHE = 10
 var CACHE_LIFESPAN = 5 // how long should the cache persist
 
+
+const LESS    = -1
+const EQUAL   =  0
+const GREATER =  1
+
 //-----------------------------------------
 
 //CONNECTION-------------------------------
@@ -40,6 +47,35 @@ var CACHE_LIFESPAN = 5 // how long should the cache persist
 var connection *net.UDPConn
 
 //------------------------------------------
+
+var getAllNodes = func () []string {
+	return []string {
+		"0.0.0.0:8888", 
+		"124124124", 
+		"124124124234", 
+		"21638492872", 
+		"5bwtry w45yb", 
+		"erbtq3vtq 3", 
+		"visdvcgwfw7", 
+		"fsiufwgfiuba", 
+		"34 t13q3vt3qc",
+		"31tt3q3vt3qc",
+		"31tt3q3vt3qc",
+		"31tt3q3vt3qc",
+		"31tt3q3vt3qc",
+		"31tt3q3vt3qc",
+		"31tt3q3vt3qc",
+		"31tt3q3vt3qc",
+		"31tt3q3vt3qc",
+		"31tt3q3vt3qc",
+		"31tt3q3vt3qc",
+		"31tt3q3vt3qc",
+		"31tt3q3vt3qc",
+		"31tt3q3vt3qc",
+		"31tt3q3vt3qc",
+		"31tt3q3vt3qc",
+	}
+}
 
 //optimizations----------------------------
 
@@ -142,6 +178,7 @@ func message_broker(whole_message []byte) ([]byte, bool) {
 	if error != nil {
 		fmt.Printf("\nUNPACK ERROR[W2] %+v\n", error)
 	}
+
 	if cast_whole_req.CheckSum != calculate_checksum(cast_whole_req.MessageID, cast_whole_req.Payload) {
 		fmt.Printf("\n[CHECKSUM WRONG NO RESPONSE SENT] %+v\n", error)
 		return nil, false
@@ -864,10 +901,58 @@ func main() {
 //MAIN FUNCTION
 //-----------------------------------------
 
+func hashDifference(key *big.Int, node *big.Int) *big.Int {
+	diff := big.NewInt(0) 
+	max := big.NewInt(0)
+	maxSlice := make([]byte, 256)
+	// Initialize with largest byte value
+	for el := range maxSlice {
+		maxSlice[el] = 15
+	}
+
+	max.SetBytes(maxSlice)
+
+	keyCmp := key.Cmp(node)
+	
+	if keyCmp == LESS {
+		return diff.Sub(node, key)
+	} else if keyCmp == EQUAL {
+		return diff.SetInt64(0)
+	} else {
+		return diff.Add(diff.Sub(max, key), node)
+	}
+}
+
+func hashInt(key string) *big.Int {
+	keyHash := hash(key)
+	keyHashInt := big.NewInt(0)
+	return keyHashInt.SetBytes(keyHash)
+}
+
+func hash(str string) []byte {
+	digest := sha256.Sum256([]byte(str))
+	return digest[:]
+}
 
 func keyRoute(key []byte)string{
+	keyHashInt := hashInt(string(key))
 
-	return ""
+	nodeList := getAllNodes()
+	//logger.Println(nodeList)
+
+	responsibleNode := nodeList[0]
+	diff := hashDifference(keyHashInt, hashInt(responsibleNode))
+
+	// Find node responsible for given key
+	for _, currNode := range nodeList {
+		currDiff := hashDifference(keyHashInt, hashInt(currNode))
+		if currDiff.Cmp(diff) == LESS {
+			diff = currDiff
+			responsibleNode = currNode
+		} 
+	}
+
+	return responsibleNode
 }
 
 func send(paylod []byte,messageID string,dest_addr string){
