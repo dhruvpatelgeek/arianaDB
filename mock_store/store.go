@@ -4,18 +4,16 @@ import (
 	"bufio"
 	"fmt"
 	"hash/crc32"
-	"hash/google_protocol_buffer/pb/protobuf"
+	"dht/google_protocol_buffer/pb/protobuf"
 	"log"
 	"net"
 	"os"
 	"runtime"
 	"strconv"
-	"sync"
-	"syscall"
 	"time"
-	"unsafe"
 	"math/big"
 	"crypto/sha256"
+	"dht/mock_store/storage"
 
 	"github.com/golang/protobuf/proto"
 	"github.com/pmylund/go-cache"
@@ -29,7 +27,7 @@ import (
 
 //-----------------------------------------
 //CONTROL PANEL----------------------------
-var debug = false
+var debug = true
 var MEMORY_LIMIT = 51200
 var MULTI_CORE_MODE = true
 var MAP_SIZE_MB = 70
@@ -59,8 +57,8 @@ var GroupSend = make(chan Message)
 var getAllNodes = func () []string {
 	return []string {
 		"127.0.0.1:3200",
-		/*"127.0.0.1:3201", 
-		"124124124", 
+		"127.0.0.1:3201", 
+		/*"124124124", 
 		"124124124234", 
 		"21638492872", 
 		"5bwtry w45yb", 
@@ -121,13 +119,59 @@ func sleepCurve() time.Duration {
 
 //-----------------------------------------
 
-//MAP_AND_CACHE----------------------------
-var storage = make(map[string][]byte)
-var mutex sync.Mutex
+//CACHE----------------------------
 
 // Create a cache with a default expiration time of 5 seconds, and which
 // purges expired items every 1 seconds
 var message_cache = cache.New(5*time.Second, 1*time.Nanosecond)
+
+/**
+ * @Description:  check if the data is in the cache
+ * @param message_id
+ * @return []byte
+ * @return bool
+ */
+ func check_cache(message_id []byte)([]byte,bool){
+	if debug {
+		fmt.Println("checking cache...")
+	}
+	response, found := message_cache.Get(string(message_id))
+
+	if ! found {
+		if debug {
+			fmt.Println("not found...")
+		}
+		return nil, false;
+	} else {
+		if debug {
+			fmt.Println("found...")
+		}
+		str := fmt.Sprintf("%v", response)
+		var cached_data=[]byte(str);
+		return cached_data,true;
+	}
+}
+
+/**
+ * @Description: put data in the cache
+ * @param message_id
+ * @param data
+ * @return bool
+ */
+func cache_data(message_id []byte,data []byte)(bool){
+	if get_mem_usage() > uint64(MEMORY_LIMIT-20) {
+		return true;
+		fmt.Println("\n[MEMORY WARNING]\n")
+		message_cache.Flush();
+	}
+	if get_mem_usage() > uint64(MEMORY_LIMIT/2) {
+		fmt.Println("\n[MEMORY WARNING 50%]\n")
+		message_cache.DeleteExpired();
+	}
+
+	message_cache.Set(string(message_id), string(data), cache.DefaultExpiration);
+	return true;
+}
 
 //-----------------------------------------
 
@@ -210,7 +254,7 @@ func message_broker(whole_message []byte) ([]byte, bool) {
 		return payload, true
 
 	} else {
-		uncached_data,shouldCache := message_handler(cast_whole_req.Payload)
+		uncached_data,shouldCache := storage.Message_handler(cast_whole_req.Payload)
 		if(shouldCache){
 			cache_data(cast_whole_req.MessageID, uncached_data)
 		}
@@ -228,470 +272,7 @@ func message_broker(whole_message []byte) ([]byte, bool) {
 
 }
 
-/**
- * @Description: peals the seconday message layer and performs server functions returns the genarated payload
- * @param message
- * @return []byte
- */
-func message_handler(message []byte) ([]byte,bool) {
-	cast_req := &protobuf.KVRequest{
-		Command: 0,
-		Key:     nil,
-		Value:   nil,
-		Version: nil,
-	}
-	error := proto.Unmarshal(message, cast_req)
-	if error != nil {
-		fmt.Printf("\nUNPACK ERROR %+v\n", error)
-	}
 
-	//* 0x01 - Put: This is a put operation.
-	//* 0x02 - Get: This is a get operation.
-	//* 0x03 - Remove: This is a remove operation.
-	//* 0x04 - Shutdown: shuts-down the node (used for testing and management).
-	//* 0x05 - Wipeout: deletes all keys stored in the node (used for testing).
-	//* 0x06 - IsAlive: does nothing but replies with success if the node is alive.
-	//* 0x07 - GetPID: the node is expected to reply with the processID of the Go process
-	//* 0x08 - GetMembershipCount:(This will be used later, for now you are expected to return 1.)
-
-	switch cast_req.GetCommand() {
-	case 1:
-		{
-			if debug {
-				fmt.Println("PUT")
-			}
-			return put(cast_req.GetKey(), cast_req.GetValue(), cast_req.GetVersion()), false
-		}
-	case 2:
-		{
-			if debug {
-				fmt.Println("GET")
-			}
-			return get(cast_req.Key), false
-		}
-	case 3:
-		{
-			if debug {
-				fmt.Println("REMOVE")
-			}
-			return remove(cast_req.Key), true
-		}
-	case 4:
-		{
-			if debug {
-				fmt.Println("SHUTDOWN")
-			}
-			fmt.Println("[TERMINATING]....")
-			shutdown()
-		}
-	case 5:
-		{
-			if debug {
-				fmt.Println("WIPEOUT")
-			}
-			return wipeout(), true
-		}
-	case 6:
-		{
-			if debug {
-				fmt.Println("IsALIVE")
-			}
-			return is_alive(), true
-		}
-	case 7:
-		{
-			if debug {
-				fmt.Println("GetPID")
-			}
-			return getpid(), true
-		}
-	case 8:
-		{
-			if debug {
-				fmt.Println("GetMembershipCount")
-			}
-			return getmemcount(), true
-		}
-	default:
-		{
-			if debug {
-				fmt.Println("INVALID COMMAND")
-			}
-			return message, true
-		}
-	}
-	return is_alive(), true
-}
-
-/**
- * @Description:  check if the data is in the cache
- * @param message_id
- * @return []byte
- * @return bool
- */
-func check_cache(message_id []byte)([]byte,bool){
-	if debug {
-		fmt.Println("checking cache...")
-	}
-	response, found := message_cache.Get(string(message_id))
-
-	if ! found {
-		if debug {
-			fmt.Println("not found...")
-		}
-		return nil, false;
-	} else {
-		if debug {
-			fmt.Println("found...")
-		}
-		str := fmt.Sprintf("%v", response)
-		var cached_data=[]byte(str);
-		return cached_data,true;
-	}
-}
-/**
- * @Description: put data in the cache
- * @param message_id
- * @param data
- * @return bool
- */
-func cache_data(message_id []byte,data []byte)(bool){
-	if get_mem_usage() > uint64(MEMORY_LIMIT-20) {
-		return true;
-		fmt.Println("\n[MEMORY WARNING]\n")
-		message_cache.Flush();
-	}
-	if get_mem_usage() > uint64(MEMORY_LIMIT/2) {
-		fmt.Println("\n[MEMORY WARNING 50%]\n")
-		message_cache.DeleteExpired();
-	}
-
-	message_cache.Set(string(message_id), string(data), cache.DefaultExpiration);
-	return true;
-}
-//-----------------------------------------
-//DATABASE FUNCTIONS-----------------------
-
-/**
- * @Description:Puts some value (and corresponding version)
- *into the store. The value (and version) can be later retrieved using the key.
- * @param key
- * @param value
- * @param version
- * @return []byte
- */
-func put(key []byte, value []byte, version int32) []byte {
-	var error_code uint32 = 0
-	error_code = 0
-	if int(len(value)) > 10000 {
-		error_code = 7
-		var err_code *uint32
-		err_code = new(uint32)
-		err_code = &error_code
-
-		var _pid *int32
-		_pid = new(int32)
-		procress_id := int32(syscall.Getpid())
-		_pid = &procress_id
-		payload := &protobuf.KVResponse{
-			ErrCode: err_code,
-			Value:   nil, // edited
-			Pid:     _pid,
-		}
-		out, err := proto.Marshal(payload)
-		if err != nil {
-			log.Fatalln("Failed to encode address book:", err)
-		}
-
-		return out
-	}
-	mutex.Lock() //<<<<<<<<<<<<<<<MAP LOCK
-
-	if bToMb(uint64(unsafe.Sizeof(storage))) < uint64(MAP_SIZE_MB) {
-
-		storage[string(key)] = value // adding the value
-		error_code = 0
-		if debug {
-			fmt.Println("PUT", string(key), ",<->", string(value))
-		}
-	} else {
-		if debug {
-			fmt.Println("ERROR PUTTING")
-		}
-		error_code = 2
-	}
-	mutex.Unlock() //<<<<<<<<<<<<<<<MAP UNLOCK
-
-	var err_code *uint32
-	err_code = new(uint32)
-	err_code = &error_code
-
-	var _pid *int32
-	_pid = new(int32)
-	procress_id := int32(syscall.Getpid())
-	_pid = &procress_id
-	payload := &protobuf.KVResponse{
-		ErrCode: err_code,
-		Value:   value,
-		Pid:     _pid,
-	}
-	out, err := proto.Marshal(payload)
-	if err != nil {
-		log.Fatalln("Failed to encode address book:", err)
-	} else {
-		if debug {
-			//fmt.Printf("NEW BUFFER-> %+v",out);
-		}
-	}
-
-	return out
-}
-
-/**
- * @Description:Returns the value and version that is associated with the key. If there is no such key in your store, the store should return error (not found).
- * @param key
- * @return []byte
- */
-func get(key []byte) []byte {
-	mutex.Lock()
-	value, found := storage[string(key)]
-	mutex.Unlock()
-	var error_code uint32
-	if found {
-		error_code = 0
-	} else {
-		error_code = 1
-	}
-
-	var err_code *uint32
-	err_code = new(uint32)
-	err_code = &error_code
-
-	var _pid *int32
-	_pid = new(int32)
-	procress_id := int32(syscall.Getpid())
-	_pid = &procress_id
-	payload := &protobuf.KVResponse{
-		ErrCode: err_code,
-		Value:   value,
-		Pid:     _pid,
-	}
-	out, err := proto.Marshal(payload)
-	if err != nil {
-		log.Fatalln("Failed to encode address book:", err)
-	} else {
-		if debug {
-			//fmt.Printf("NEW BUFFER-> %+v",out);
-		}
-	}
-
-	return out
-}
-
-/**
- * @Description:Removes the value that is associated with the key.
- * @param key
- * @return []byte
- */
-func remove(key []byte) []byte {
-	mutex.Lock()
-	value, found := storage[string(key)]
-	if found {
-		delete(storage, string(key))
-	}
-	mutex.Unlock()
-	if found {
-		var error_code uint32
-		error_code = 0
-		var err_code *uint32
-		err_code = new(uint32)
-		err_code = &error_code
-
-		var _pid *int32
-		_pid = new(int32)
-		procress_id := int32(syscall.Getpid())
-		_pid = &procress_id
-		payload := &protobuf.KVResponse{
-			ErrCode: err_code,
-			Value:   value,
-			Pid:     _pid,
-		}
-		out, err := proto.Marshal(payload)
-		if err != nil {
-			log.Fatalln("Failed to encode address book:", err)
-		} else {
-			if debug {
-				//fmt.Printf("NEW BUFFER-> %+v",out);
-			}
-		}
-
-		return out
-
-	} else {
-		var error_code uint32
-		error_code = 1
-		var err_code *uint32
-		err_code = new(uint32)
-		err_code = &error_code
-
-		var _pid *int32
-		_pid = new(int32)
-		procress_id := int32(syscall.Getpid())
-		_pid = &procress_id
-		payload := &protobuf.KVResponse{
-			ErrCode: err_code,
-			Value:   value,
-			Pid:     _pid,
-		}
-		out, err := proto.Marshal(payload)
-		if err != nil {
-			log.Fatalln("Failed to encode address book:", err)
-		} else {
-			if debug {
-				//fmt.Printf("NEW BUFFER-> %+v",out);
-			}
-		}
-
-		return out
-	}
-}
-
-/**
- * @Description: calls os.shutdown
- */
-func shutdown() {
-	os.Exit(555)
-}
-
-/**
- * @Description: clears the database
- * @return []byte
- */
-func wipeout() []byte {
-	mutex.Lock() //<<<<<<<<<<<<<<<MAP LOCK
-	for k := range storage {
-		delete(storage, k)
-	}
-	mutex.Unlock() //<<<<<<<<<<<<<<<MAP UNLOCK
-	var error_code uint32
-	var err_code *uint32
-	err_code = new(uint32)
-	err_code = &error_code
-
-	var _pid *int32
-	_pid = new(int32)
-	procress_id := int32(syscall.Getpid())
-	_pid = &procress_id
-	payload := &protobuf.KVResponse{
-		ErrCode: err_code,
-		Pid:     _pid,
-	}
-	out, err := proto.Marshal(payload)
-	if err != nil {
-		log.Fatalln("Failed to encode address book:", err)
-	} else {
-		if debug {
-			//fmt.Printf("NEW BUFFER-> %+v",out);
-		}
-	}
-
-	return out
-}
-
-/**
- * @Description: response indicating server is alive
- * @return []byte
- */
-func is_alive() []byte {
-	fmt.Println("CLIENT ASKED IF SERVER ALIVE")
-
-	var error_code uint32
-	error_code = 0
-
-	var err_code *uint32
-	err_code = new(uint32)
-	err_code = &error_code
-
-	var _pid *int32
-	_pid = new(int32)
-	procress_id := int32(syscall.Getpid())
-	_pid = &procress_id
-	payload := &protobuf.KVResponse{
-		ErrCode: err_code,
-		Pid:     _pid,
-	}
-	out, err := proto.Marshal(payload)
-	if err != nil {
-		log.Fatalln("Failed to encode address book:", err)
-	} else {
-		if debug {
-			//fmt.Printf("NEW BUFFER-> %+v",out);
-		}
-	}
-	return out
-}
-
-/**
- * @Description: gets the current procressID
- * @return []byte
- */
-func getpid() []byte {
-	var error_code uint32
-	error_code = 0
-
-	var err_code *uint32
-	err_code = new(uint32)
-	err_code = &error_code
-
-	var _pid *int32
-	_pid = new(int32)
-	procress_id := int32(syscall.Getpid())
-	_pid = &procress_id
-	payload := &protobuf.KVResponse{
-		ErrCode: err_code,
-		Pid:     _pid,
-	}
-	out, err := proto.Marshal(payload)
-	if err != nil {
-		log.Fatalln("Failed to encode address book:", err)
-	} else {
-		if debug {
-			//fmt.Printf("NEW BUFFER-> %+v",out);
-		}
-	}
-	return out
-}
-
-/**
- * @Description: returns number of members
- * @return []byte
- */
-func getmemcount() []byte {
-	var error_code uint32
-	error_code = 0
-
-	var err_code *uint32
-	err_code = new(uint32)
-	err_code = &error_code
-
-	var _pid *int32
-	_pid = new(int32)
-	procress_id := int32(syscall.Getpid())
-	_pid = &procress_id
-	payload := &protobuf.KVResponse{
-		ErrCode: err_code,
-		Pid:     _pid,
-	}
-	out, err := proto.Marshal(payload)
-	if err != nil {
-		log.Fatalln("Failed to encode address book:", err)
-	} else {
-		if debug {
-			//fmt.Printf("NEW BUFFER-> %+v",out);
-		}
-	}
-	return out
-}
 
 //-----------------------------------------
 
@@ -1100,10 +681,10 @@ func router(payload []byte,clientAddr string){
 			gossipPrepend(unmarshelled_payload.Payload,clientAddr)
 			log.Println("gossip")
 		case "reques": // node req prepend
-			nodePrePend(unmarshelled_payload.Payload,unmarshelled_payload.MessageID)
+			nodePrePend(unmarshelled_payload.Payload,unmarshelled_payload.MessageID[6:])
 			log.Println("reques")
 		case "respos": //resposnse prepend
-			resPrepend(unmarshelled_payload.Payload,unmarshelled_payload.MessageID)
+			resPrepend(unmarshelled_payload.Payload,unmarshelled_payload.MessageID[6:])
 			log.Println("respos")
 		default: // no pre pend
 			//log.Println("default-> no prepend")
@@ -1115,14 +696,15 @@ func router(payload []byte,clientAddr string){
 	}
 }
 
+const LOCAL_PORT = "3201"
+
 // no pre pend
 func noPrePend(payload []byte,messageID []byte,clientAddr string) {
 	//	func keyRoute(key []byte)string
 	//	func send(paylod []byte,messageID string,dest_addr string)
 	where_to_send:=keyRoute(payload)
-	argsWithProg := os.Args
-	//log.Println("Destination ", where_to_send)
-	if(where_to_send=="127.0.0.1:3200"){
+	//argsWithProg := os.Args
+	if(where_to_send=="127.0.0.1:" + LOCAL_PORT){
 		response, found := message_cache.Get(string(messageID))
 		if found{
 			str := fmt.Sprintf("%v", response)
@@ -1130,7 +712,7 @@ func noPrePend(payload []byte,messageID []byte,clientAddr string) {
 			send(cached_data,messageID,clientAddr)
 
 		} else {
-			response_to_send,shouldCache:=message_handler(payload);
+			response_to_send,shouldCache:=storage.Message_handler(payload);
 			if shouldCache{
 				message_cache.Add(string(messageID),response_to_send,5*time.Second)
 			}
@@ -1139,25 +721,21 @@ func noPrePend(payload []byte,messageID []byte,clientAddr string) {
 	} else {
 		internalPayload:=&protobuf.InternalMsg{
 			ClientAddr: clientAddr,
-			OriginAddr: "127.0.0.1"+argsWithProg[1],
+			OriginAddr: "127.0.0.1:" + LOCAL_PORT,
 			Payload:    payload,
 		}
 		marshalled_internalPayload,err:=proto.Marshal(internalPayload)
 		if(err!=nil){
 			log.Println("[ERTICAL CASTINF ERROR][234]")
-		}else {
-			send(marshalled_internalPayload,messageID,clientAddr)
+		} else {
+			send(marshalled_internalPayload, append([]byte("reques"), messageID...), where_to_send)
 		}
 
 	}
 }
 
 func gossipPrepend(payload []byte,clientAddr string){
-	unmarshelled_payload:=&protobuf.Msg{
-		MessageID: nil,
-		Payload:   nil,
-		CheckSum:  0,
-	}
+	unmarshelled_payload:=&protobuf.Msg{}
 	proto.Unmarshal(payload,unmarshelled_payload)
 
 	struct_to_push:=Message{
@@ -1165,36 +743,38 @@ func gossipPrepend(payload []byte,clientAddr string){
 		Payload:    unmarshelled_payload.Payload,
 		MessageID:  string(unmarshelled_payload.MessageID),
 	}
-	GroupSend<-struct_to_push;
+
+	GroupSend <- struct_to_push;
 }
 
 // node req prepend
 func nodePrePend(node_to_node_payload []byte,messageID []byte){
-	unmarshelled_node_to_node_payload:=&protobuf.InternalMsg{
-		ClientAddr: "",
-		OriginAddr: "",
-		Payload:    nil,
+	unmarshelled_node_to_node_payload := &protobuf.InternalMsg{}
+
+	proto.Unmarshal(node_to_node_payload, unmarshelled_node_to_node_payload)
+	payload_gen, _ := storage.Message_handler(unmarshelled_node_to_node_payload.Payload)
+
+	internalPayload:=&protobuf.InternalMsg{
+		ClientAddr: unmarshelled_node_to_node_payload.GetClientAddr(),
+		Payload:    payload_gen,
 	}
-	proto.Unmarshal(node_to_node_payload,unmarshelled_node_to_node_payload)
-	payload_gen,_:=message_handler(unmarshelled_node_to_node_payload.Payload)
-	send(payload_gen,messageID,unmarshelled_node_to_node_payload.OriginAddr)
-	// call the message_handler
+	marshalled_internalPayload, err:=proto.Marshal(internalPayload)
+	if(err!=nil){
+		log.Println("[ERTICAL CASTINF ERROR][234]")
+	}
+
+	send(marshalled_internalPayload, append([]byte("respos"), messageID...), unmarshelled_node_to_node_payload.OriginAddr)
+	// call the storage.Message_handler
 	// then send to the origin node
 
 }
 
-func  resPrepend( internalPayload []byte,messageID []byte){
+func resPrepend(internalPayload []byte,messageID []byte){
 	// send the internalPayload to the client
-	unmarshelled_node_to_node_payload:=&protobuf.InternalMsg{
-		ClientAddr: "",
-		OriginAddr: "",
-		Payload:    nil,
-	}
+	unmarshelled_node_to_node_payload:=&protobuf.InternalMsg{}
 	proto.Unmarshal(internalPayload,unmarshelled_node_to_node_payload)
 
-
-	send(unmarshelled_node_to_node_payload.Payload,messageID,unmarshelled_node_to_node_payload.ClientAddr)
-
+	send(unmarshelled_node_to_node_payload.Payload, messageID, unmarshelled_node_to_node_payload.ClientAddr)
 }
 
 

@@ -1,4 +1,4 @@
-module hash
+module dht
 
 go 1.15
 
