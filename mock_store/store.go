@@ -35,6 +35,12 @@ var CACHE_LIFESPAN = 5 // how long should the cache persist
 
 //-----------------------------------------
 
+//CONNECTION-------------------------------
+
+var connection *net.UDPConn
+
+//------------------------------------------
+
 //optimizations----------------------------
 
 func proportionalCollector() {
@@ -661,6 +667,7 @@ func UDP_daemon(connection *net.UDPConn, conduit chan int, thread_num int) {
 	}
 	n, remoteAddr, err = connection.ReadFromUDP(buffer)
 	conduit <- 1
+		//router()
 	response_val, valid := message_broker(buffer[:n])
 	if valid {
 		n, err = connection.WriteToUDP(response_val, remoteAddr)
@@ -830,6 +837,8 @@ func bToMb(b uint64) uint64 {
 	return b / 1024 / 1024
 }
 
+
+
 //-----------------------------------------
 //MAIN FUNCTION
 //-----------------------------------------
@@ -848,3 +857,55 @@ func main() {
 	}
 
 }
+
+
+
+//-----------------------------------------
+//MAIN FUNCTION
+//-----------------------------------------
+
+
+func keyRoute(key []byte)string{
+
+	return ""
+}
+
+func send(paylod []byte,messageID string,dest_addr string){
+
+	return
+}
+
+func router(payload []byte,clientAddr string){
+
+	// no pre pend
+
+	//gossip pre pend
+
+	// node req prepend
+
+	//resposnse prepend
+	return
+}
+
+// no pre pend
+func noPrePend(payload []byte,messageID string,clientAddr string) {
+	//	func keyRoute(key []byte)string
+	//	func send(paylod []byte,messageID string,dest_addr string)
+}
+
+func gossipPrepend(payload []byte){
+	// trigger the gossip chanel
+}
+
+// node req prepend
+func nodePrePend(payload []byte,messageID string){
+	// call the messaage_handler
+	// then send to the origin node
+}
+
+func  resPrepend( internalPayload []byte,messageID string){
+	// send the internalPayload to the client
+}
+
+
+//-----------------------------------------
