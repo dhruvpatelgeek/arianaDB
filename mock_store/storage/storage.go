@@ -46,7 +46,6 @@ const INV_VAL   = 7
 var storage = make(map[string][]byte)
 var mutex sync.Mutex
 
-
 /**
  * @Description: peals the seconday message layer and performs server functions returns the genarated payload
  * @param message
