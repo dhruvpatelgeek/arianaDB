@@ -21,7 +21,7 @@ COPY . .
 RUN go build mock_store/main.go
 
 # Run the app
-CMD go run mock_store/main.go 3200
+CMD go run mock_store/main.go 3202
 
 #expose 
-EXPOSE 3200/udp
+EXPOSE 3202/udp

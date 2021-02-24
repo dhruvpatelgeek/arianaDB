@@ -1,15 +1,18 @@
 package storage
 
 import (
+	"crypto/sha256"
 	"dht/google_protocol_buffer/pb/protobuf"
+	"encoding/hex"
 	"fmt"
 	"log"
+	"math/big"
 	"os"
 	"runtime"
 	"sync"
 	"syscall"
 	//"encoding/hex"
-
+	"dht/mock_store/transport"
 	"github.com/golang/protobuf/proto"
 )
 
@@ -42,9 +45,163 @@ const UNKWN_CMD = 5
 const INV_KEY   = 6
 const INV_VAL   = 7
 
+//for the refactor
+const LESS    = -1
+const EQUAL   =  0
+const GREATER =  1
+
+
 //MAP_AND_CACHE----------------------------
 var storage = make(map[string][]byte)
 var mutex sync.Mutex
+
+//-----------------------------------------
+var getAllNodes = func () []string {
+	return []string {
+		//transport.GetLocalAddr(),
+		"128.189.222.109:3200",
+		"128.189.222.109:3201",
+		"128.189.222.109:3202",
+		"128.189.222.109:3203",
+		"128.189.222.109:3204",
+		"128.189.222.109:3205",
+		"128.189.222.109:3206",
+		"128.189.222.109:3207",
+		"128.189.222.109:3208",
+		"128.189.222.109:3209",
+		"128.189.222.109:3210",
+		"128.189.222.109:3211",
+		"128.189.222.109:3212",
+		"128.189.222.109:3213",
+		"128.189.222.109:3214",
+		"128.189.222.109:3215",
+		"128.189.222.109:3216",
+		"128.189.222.109:3217",
+		"128.189.222.109:3218",
+		"128.189.222.109:3219",
+		"128.189.222.109:3220",
+		"128.189.222.109:3221",
+		"128.189.222.109:3222",
+		"128.189.222.109:3223",
+		//"127.0.0.1:3202",
+		//"127.0.0.1:3203",
+		//"127.0.0.1:3204",
+		//"127.0.0.1:3205",
+		/*"124124124",
+		"124124124234",
+		"21638492872",
+		"5bwtry w45yb",
+		"erbtq3vtq 3",
+		"visdvcgwfw7",
+		"fsiufwgfiuba",
+		"34 t13q3vt3qc",
+		"31tt3q3vt3qc",
+		"31tt3q3vt3qc",
+		"31tt3q3vt3qc",
+		"31tt3q3vt3qc",
+		"31tt3q3vt3qc",
+		"31tt3q3vt3qc",
+		"31tt3q3vt3qc",
+		"31tt3q3vt3qc",
+		"31tt3q3vt3qc",
+		"31tt3q3vt3qc",
+		"31tt3q3vt3qc",
+		"31tt3q3vt3qc",
+		"31tt3q3vt3qc",
+		"31tt3q3vt3qc",
+		"31tt3q3vt3qc",*/
+	}
+}
+
+
+func hashDifference(key *big.Int, node *big.Int) *big.Int {
+	diff := big.NewInt(0)
+	max := big.NewInt(0)
+	maxSlice := make([]byte, 256)
+	// Initialize with largest byte value
+	for el := range maxSlice {
+		maxSlice[el] = 15
+	}
+
+	max.SetBytes(maxSlice)
+
+	keyCmp := key.Cmp(node)
+
+	if keyCmp == LESS {
+		return diff.Sub(node, key)
+	} else if keyCmp == EQUAL {
+		return diff.SetInt64(0)
+	} else {
+		return diff.Add(diff.Sub(max, key), node)
+	}
+}
+
+func hashInt(key string) *big.Int {
+	keyHash := hash(key)
+	keyHashInt := big.NewInt(0)
+	return keyHashInt.SetBytes(keyHash)
+}
+
+func hash(str string) []byte {
+	digest := sha256.Sum256([]byte(str))
+	return digest[:]
+}
+
+func keyRoute(key []byte) string {
+	if len(key) == 0 {
+		return transport.GetLocalAddr()
+	}
+
+	keyHashInt := hashInt(hex.EncodeToString(key))
+	//log.Println(hex.EncodeToString(key), " Key hash", keyHashInt.String())
+
+	nodeList := getAllNodes()
+	//logger.Println(nodeList)
+
+	responsibleNode := nodeList[0]
+	diff := hashDifference(keyHashInt, hashInt(responsibleNode))
+
+	// Find node responsible for given key
+	for _, currNode := range nodeList {
+		currDiff := hashDifference(keyHashInt, hashInt(currNode))
+		if currDiff.Cmp(diff) == LESS {
+			diff = currDiff
+			responsibleNode = currNode
+		}
+	}
+
+	return responsibleNode
+}
+
+
+func StorageModule(ts *transport.TransportModule,reqFrom_ts chan protobuf.InternalMsg){
+	for{
+		req:=<-reqFrom_ts
+		if(req.OriginAddr==""){
+			unmarshalled_payload:=&protobuf.KVRequest{}
+			proto.Unmarshal(req.Payload,unmarshalled_payload)
+			destAddr := keyRoute(unmarshalled_payload.Key)
+			//argsWithProg := os.Args
+			if (destAddr == transport.GetLocalAddr()){ // is it should be handles
+				response, _ := Message_handler(req.Payload)
+				ts.ResSend(response,string(req.Message ), req.ClientAddr)
+			} else {
+				internalPayload_new :=req
+				internalPayload_new.OriginAddr=transport.GetLocalAddr()
+				marshalled_internalPayload, err := proto.Marshal(&internalPayload_new)
+				if err != nil {
+					log.Println("[ERTICAL CASTINF ERROR][234]")
+				} else {
+					ts.Send(marshalled_internalPayload,[]byte( "reques"+string(req.Message)), destAddr)
+				}
+			}
+		} else {
+			response, _ := Message_handler(req.Payload)
+			ts.ResSend(response,string(req.Message),req.ClientAddr);
+		}
+	}
+}
+
 
 /**
  * @Description: peals the seconday message layer and performs server functions returns the genarated payload
