@@ -1,4 +1,4 @@
-package main
+package transport
 
 import (
 	"fmt"
@@ -6,7 +6,6 @@ import (
 	"dht/google_protocol_buffer/pb/protobuf"
 	"log"
 	"net"
-	"os"
 	"runtime"
 	"strconv"
 	"time"
@@ -59,10 +58,10 @@ var getAllNodes = func () []string {
 	return []string {
 		"127.0.0.1:3200",
 		"127.0.0.1:3201", 
-		"127.0.0.1:3202", 
-		"127.0.0.1:3203", 
-		"127.0.0.1:3204", 
-		"127.0.0.1:3205", 
+		//"127.0.0.1:3202", 
+		//"127.0.0.1:3203", 
+		//"127.0.0.1:3204", 
+		//"127.0.0.1:3205", 
 		/*"124124124", 
 		"124124124234", 
 		"21638492872", 
@@ -187,16 +186,8 @@ func cache_data(message_id []byte,data []byte)(bool){
  * @param port
  * @return bool
  */
-func check_if_port_is_valid(port string) bool {
-	casted_port, err := strconv.Atoi(port)
-	if err != nil {
-		fmt.Printf("CASTING ERROR [port valid]")
-	}
-	if (casted_port > 65535) || (casted_port < 0) {
-		return false
-	} else {
-		return true
-	}
+func check_if_port_is_valid(port int) bool {
+	return (port < 65535) || (port > 0)
 }
 
 /**
@@ -224,13 +215,14 @@ func UDP_daemon(connection *net.UDPConn, conduit chan int, thread_num int) {
 	if debug {
 		fmt.Println("THREAD SPAWNED->", thread_num)
 	}
-	buffer := make([]byte, 65535)
-	n, remoteAddr, err := 0, new(net.UDPAddr), error(nil)
+
+	buffer := make([]byte, 10100)
+	n, remoteAddr, err := connection.ReadFromUDP(buffer)
 	for err != nil {
 		fmt.Println("listener failed - ", err)
 		conduit <- 2
 	}
-	n, remoteAddr, err = connection.ReadFromUDP(buffer)
+
 	conduit <- 1
 	go router(buffer[:n], remoteAddr.String())
 }
@@ -240,83 +232,95 @@ func UDP_daemon(connection *net.UDPConn, conduit chan int, thread_num int) {
  * @param _port
  * @return func()
  */
-func spawn_UDP_daemon(_port string) func() {
-	port_num, err := strconv.Atoi(_port)
-	if err != nil {
-		fmt.Printf("PORT CASTING ERROR [EXIT]")
-	}
-	address := net.UDPAddr{
-		Port: port_num,
-		IP:   net.IP{0, 0, 0, 0}, // local ip address
-	}
-	fmt.Println("ADDRESS IS", address.IP, ":", address.Port)
-	return func() {
-		var thread_num int = 0
-		connection, err = net.ListenUDP("udp", &address)
-		err = connection.SetWriteBuffer(20000)
-		if err != nil {
-			fmt.Printf("[WRITE SETTING ERROR]%+v", err)
-		}
-		err = connection.SetReadBuffer(20000)
-		if err != nil {
-			fmt.Printf("[READ SETTING ERROR]%+v", err)
-		}
-		if err != nil {
-			panic(err)
-		}
-		conduit := make(chan int)
-		if MULTI_CORE_MODE {
-			for i := 0; i < 1; i++ {
-				go UDP_daemon(connection, conduit, thread_num)
-				thread_num++
-			}
-		} else {
+func daemonSpawner() {
+	
+	var thread_num int = 0
+	conduit := make(chan int)
+	if MULTI_CORE_MODE {
+		for i := 0; i < 1; i++ {
 			go UDP_daemon(connection, conduit, thread_num)
 			thread_num++
 		}
-		if !debug {
-			fmt.Print("\033[s")
-		}
-
-		for {
-			if get_mem_usage() < uint64(MEMORY_LIMIT) {
-				switch <-conduit {
-				case 1:
-					go UDP_daemon(connection, conduit, thread_num)
-					if thread_num % 500 == 0 {
-						log.Println(" Exited thread ", thread_num)
-					}
-					thread_num++
-				case 2:
-					if debug {
-						fmt.Println("THREAD NUMBER ", thread_num, "EXITED ON ERROR")
-					}
-					thread_num++
-				}
-
-			} else {
-				fmt.Printf("\n[HALT] MEMORY FULL calling garbage collector-> %+v\n", get_mem_usage())
-				time.Sleep(1 * time.Second)
-				message_cache.Flush()
-				message_cache.DeleteExpired()
-				runtime.GC()
-			}
-		}
-
+	} else {
+		go UDP_daemon(connection, conduit, thread_num)
+		thread_num++
 	}
+	if !debug {
+		fmt.Print("\033[s")
+	}
+
+	for {
+		if get_mem_usage() < uint64(MEMORY_LIMIT) {
+			switch <-conduit {
+			case 1:
+				go UDP_daemon(connection, conduit, thread_num)
+				if thread_num % 500 == 0 {
+					log.Println(" Exited thread ", thread_num)
+				}
+				thread_num++
+			case 2:
+				if debug {
+					fmt.Println("THREAD NUMBER ", thread_num, "EXITED ON ERROR")
+				}
+				thread_num++
+			}
+
+		} else {
+			fmt.Printf("\n[HALT] MEMORY FULL calling garbage collector-> %+v\n", get_mem_usage())
+			time.Sleep(1 * time.Second)
+			message_cache.Flush()
+			message_cache.DeleteExpired()
+			runtime.GC()
+		}
+	}
+}
+
+func listen(port int) {
+	var err error
+
+	address := net.UDPAddr{
+		Port: port,
+		IP:   net.IP{0, 0, 0, 0}, // local ip address
+	}
+	connection, err = net.ListenUDP("udp", &address)
+	err = connection.SetWriteBuffer(20000)
+	if err != nil {
+		fmt.Printf("[WRITE SETTING ERROR]%+v", err)
+	}
+
+	err = connection.SetReadBuffer(20000)
+	if err != nil {
+		fmt.Printf("[READ SETTING ERROR]%+v", err)
+	}
+
+	fmt.Println("ADDRESS IS", address.IP, ":", address.Port)
 }
 
 /**
  * @Description: inialises the server based on port number
  * @param args
  */
-func init_server(args string) {
-	spawner := spawn_UDP_daemon(args)
+func Init_server(args string) {
+	port, err := strconv.Atoi(args)
+	if err != nil {
+		fmt.Printf("PORT CASTING ERROR [EXIT]")
+	}
+
+	if !check_if_port_is_valid(port) {
+		fmt.Printf("PORT NOT VALID,EXITTING...\n")
+	} else {
+		fmt.Printf("------------------\n")
+		LOCAL_PORT = args
+	}
+
+	listen(port)
+
 	if MULTI_CORE_MODE {
 		fmt.Println("[MULTICORE MODE] [", runtime.NumCPU(), "] SPANNERS AT PORT [", args, "] SYS MEM LIMIT [", MEMORY_LIMIT, "]")
 	}
+
 	go proportionalCollector()
-	spawner()
+	daemonSpawner()
 
 }
 
@@ -417,6 +421,10 @@ func hash(str string) []byte {
 }
 
 func keyRoute(key []byte) string {
+	if len(key) == 0 {
+		return "127.0.0.1:" + LOCAL_PORT
+	}
+
 	keyHashInt := hashInt(hex.EncodeToString(key))
 	//log.Println(hex.EncodeToString(key), " Key hash", keyHashInt.String())
 
@@ -438,7 +446,7 @@ func keyRoute(key []byte) string {
 	return responsibleNode
 }
 
-func send(payload []byte, messageID []byte, destAddr string) {
+func Send(payload []byte, messageID []byte, destAddr string) {
 	message, err := generateShell(payload, messageID)
 	if err != nil {
 		fmt.Println("payload gen failed");
@@ -454,6 +462,8 @@ func send(payload []byte, messageID []byte, destAddr string) {
 	if err != nil {
 		log.Println("Address error ", err)
 	}
+
+	//log.Println("Sending ", destAddr)
 
 	connection.WriteToUDP(message, addr)
 }
@@ -510,7 +520,7 @@ func noPrePend(payload []byte, messageID []byte, clientAddr string) {
 	cachedResponse, found := check_cache(messageID)
 
 	if found {
-		send(cachedResponse, messageID, clientAddr)
+		Send(cachedResponse, messageID, clientAddr)
 	} else {
 		kvreq := &protobuf.KVRequest{}
 		error := proto.Unmarshal(payload, kvreq)
@@ -518,12 +528,14 @@ func noPrePend(payload []byte, messageID []byte, clientAddr string) {
 			log.Println("UNPACK ERROR ", error)
 		}
 
+		//log.Println("key ", hex.EncodeToString(kvreq.GetKey()), " ", kvreq.GetCommand())
+
 		destAddr := keyRoute(kvreq.GetKey())
 		//argsWithProg := os.Args
 		if (destAddr == "127.0.0.1:" + LOCAL_PORT){
 			response, _ := storage.Message_handler(payload)
 			cache_data(messageID, response)
-			send(response, messageID, clientAddr)
+			Send(response, messageID, clientAddr)
 		} else {
 			internalPayload := &protobuf.InternalMsg{
 				ClientAddr: clientAddr,
@@ -534,17 +546,17 @@ func noPrePend(payload []byte, messageID []byte, clientAddr string) {
 			if err != nil {
 				log.Println("[ERTICAL CASTINF ERROR][234]")
 			} else {
-				send(marshalled_internalPayload, append([]byte("reques"), messageID...), destAddr)
+				Send(marshalled_internalPayload, append([]byte("reques"), messageID...), destAddr)
 			}
 		}
 	}
 }
 
 func gossipPrepend(payload []byte, clientAddr string) {
-	unmarshelled_payload:=&protobuf.Msg{}
+	unmarshelled_payload := &protobuf.Msg{}
 	proto.Unmarshal(payload,unmarshelled_payload)
 
-	struct_to_push:=Message{
+	struct_to_push := Message {
 		ClientAddr: clientAddr,
 		Payload:    unmarshelled_payload.Payload,
 		MessageID:  string(unmarshelled_payload.MessageID),
@@ -565,7 +577,7 @@ func nodePrePend(node2nodePayload []byte, messageID []byte){
 
 	cachedResponse, found := check_cache(messageID)
 	if found {
-		send(cachedResponse, messageID, clientAddr)
+		Send(cachedResponse, messageID, clientAddr)
 	} else {
 		response, _ := storage.Message_handler(reqPayload)
 		cache_data(messageID, response)
@@ -580,7 +592,7 @@ func nodePrePend(node2nodePayload []byte, messageID []byte){
 			log.Println("[ERTICAL CASTINF ERROR][234]")
 		}
 
-		send(internalPayload, append([]byte("respos"), messageID...), originAddr)
+		Send(internalPayload, append([]byte("respos"), messageID...), originAddr)
 	}
 }
 
@@ -592,27 +604,5 @@ func resPrepend(node2nodePayload []byte, messageID []byte){
 	response := node2nodeMsg.GetPayload()
 
 	cache_data(messageID, response)
-	send(response, messageID, node2nodeMsg.GetClientAddr())
+	Send(response, messageID, node2nodeMsg.GetClientAddr())
 }
-
-//-----------------------------------------
-//MAIN FUNCTION
-//-----------------------------------------
-func main() {
-	fmt.Println("MAIN 122")
-	argsWithProg := os.Args
-	if len(argsWithProg) != 2 {
-		fmt.Printf("INVALID NUMBER OF ARGUMENTS, EXITTING....\n")
-	} else {
-		if !check_if_port_is_valid(argsWithProg[1]) {
-			fmt.Printf("PORT NOT VALID,EXITTING...\n")
-		} else {
-			fmt.Printf("------------------\n")
-			LOCAL_PORT = argsWithProg[1]
-			init_server(argsWithProg[1]) // initaliaze;
-		}
-	}
-
-}
-
-//-----------------------------------------

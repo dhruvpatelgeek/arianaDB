@@ -52,7 +52,7 @@ var mutex sync.Mutex
  * @param message
  * @return []byte
  */
- func Message_handler(message []byte) ([]byte,bool) {
+ func Message_handler(message []byte) ([]byte, bool) {
 	cast_req := &protobuf.KVRequest{}
 	error := proto.Unmarshal(message, cast_req)
 	if error != nil {
@@ -220,9 +220,11 @@ func shutdown() {
  */
 func wipeout() []byte {
 	mutex.Lock() //<<<<<<<<<<<<<<<MAP LOCK
+	/*
 	for k := range storage {
 		delete(storage, k)
-	}
+	}*/
+	storage = make(map[string][]byte)
 	mutex.Unlock() //<<<<<<<<<<<<<<<MAP UNLOCK
 	var errCode uint32 = OK
 
@@ -231,6 +233,8 @@ func wipeout() []byte {
 	if err != nil {
 		log.Fatalln("Failed to encode address book:", err)
 	}
+
+	log.Println("Wipeout ", payload)
 
 	return out
 }
