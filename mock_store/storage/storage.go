@@ -21,7 +21,7 @@ import (
 
 //CONTROL PANEL----------------------------
 var debug = false
-var MAP_SIZE_MB = 128 // memory HARD LIMIT
+var MAP_SIZE_MB = 128000000000000000 // memory HARD LIMIT
 
 // Command numbers
 const PUT      = 1
