@@ -1,0 +1,13 @@
+syntax = "proto3";
+package protobuf;
+option go_package = "pb/protobuf";
+
+message MembershipReq {
+    // src address
+    string sourceAddress = 1;
+
+    uint32 command = 2;
+    repeated string membersList = 3;
+
+    optional string joinDestinationAddress = 4;
+}

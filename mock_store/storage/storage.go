@@ -3,6 +3,7 @@ package storage
 import (
 	"crypto/sha256"
 	"dht/google_protocol_buffer/pb/protobuf"
+	"dht/mock_store/membership"
 	"encoding/hex"
 	"fmt"
 	"log"
@@ -11,8 +12,10 @@ import (
 	"runtime"
 	"sync"
 	"syscall"
+
 	//"encoding/hex"
 	"dht/mock_store/transport"
+
 	"github.com/golang/protobuf/proto"
 )
 
@@ -56,62 +59,63 @@ var storage = make(map[string][]byte)
 var mutex sync.Mutex
 
 //-----------------------------------------
-var getAllNodes = func () []string {
-	return []string {
-		//transport.GetLocalAddr(),
-		"128.189.222.109:3200",
-		"128.189.222.109:3201",
-		"128.189.222.109:3202",
-		"128.189.222.109:3203",
-		"128.189.222.109:3204",
-		"128.189.222.109:3205",
-		"128.189.222.109:3206",
-		"128.189.222.109:3207",
-		"128.189.222.109:3208",
-		"128.189.222.109:3209",
-		"128.189.222.109:3210",
-		"128.189.222.109:3211",
-		"128.189.222.109:3212",
-		"128.189.222.109:3213",
-		"128.189.222.109:3214",
-		"128.189.222.109:3215",
-		"128.189.222.109:3216",
-		"128.189.222.109:3217",
-		"128.189.222.109:3218",
-		"128.189.222.109:3219",
-		"128.189.222.109:3220",
-		"128.189.222.109:3221",
-		"128.189.222.109:3222",
-		"128.189.222.109:3223",
-		//"127.0.0.1:3202",
-		//"127.0.0.1:3203",
-		//"127.0.0.1:3204",
-		//"127.0.0.1:3205",
-		/*"124124124",
-		"124124124234",
-		"21638492872",
-		"5bwtry w45yb",
-		"erbtq3vtq 3",
-		"visdvcgwfw7",
-		"fsiufwgfiuba",
-		"34 t13q3vt3qc",
-		"31tt3q3vt3qc",
-		"31tt3q3vt3qc",
-		"31tt3q3vt3qc",
-		"31tt3q3vt3qc",
-		"31tt3q3vt3qc",
-		"31tt3q3vt3qc",
-		"31tt3q3vt3qc",
-		"31tt3q3vt3qc",
-		"31tt3q3vt3qc",
-		"31tt3q3vt3qc",
-		"31tt3q3vt3qc",
-		"31tt3q3vt3qc",
-		"31tt3q3vt3qc",
-		"31tt3q3vt3qc",
-		"31tt3q3vt3qc",*/
-	}
-}
+// var getAllNodes = gms.GetAllNodes()
+// func () []string {
+// 	return []string {
+// 		//transport.GetLocalAddr(),
+// 		// "127.0.0.1:3200",
+// 		// "127.0.0.1:3201",
+// 		// "127.0.0.1:3202",
+// 		// "127.0.0.1:3203",
+// 		// "127.0.0.1:3204",
+// 		// "127.0.0.1:3205",
+// 		"127.0.0.1:3206",
+// 		"127.0.0.1:3207",
+// 		"127.0.0.1:3208",
+// 		"127.0.0.1:3209",
+// 		"127.0.0.1:3210",
+// 		"127.0.0.1:3211",
+// 		// "127.0.0.1:3212",
+// 		// "127.0.0.1:3213",
+// 		// "127.0.0.1:3214",
+// 		// "127.0.0.1:3215",
+// 		// "127.0.0.1:3216",
+// 		// "127.0.0.1:3217",
+// 		// "127.0.0.1:3218",
+// 		// "127.0.0.1:3219",
+// 		// "127.0.0.1:3220",
+// 		// "127.0.0.1:3221",
+// 		// "127.0.0.1:3222",
+// 		// "127.0.0.1:3223",
+// 		//"127.0.0.1:3202",
+// 		//"127.0.0.1:3203",
+// 		//"127.0.0.1:3204",
+// 		//"127.0.0.1:3205",
+// 		/*"124124124",
+// 		"124124124234",
+// 		"21638492872",
+// 		"5bwtry w45yb",
+// 		"erbtq3vtq 3",
+// 		"visdvcgwfw7",
+// 		"fsiufwgfiuba",
+// 		"34 t13q3vt3qc",
+// 		"31tt3q3vt3qc",
+// 		"31tt3q3vt3qc",
+// 		"31tt3q3vt3qc",
+// 		"31tt3q3vt3qc",
+// 		"31tt3q3vt3qc",
+// 		"31tt3q3vt3qc",
+// 		"31tt3q3vt3qc",
+// 		"31tt3q3vt3qc",
+// 		"31tt3q3vt3qc",
+// 		"31tt3q3vt3qc",
+// 		"31tt3q3vt3qc",
+// 		"31tt3q3vt3qc",
+// 		"31tt3q3vt3qc",
+// 		"31tt3q3vt3qc",
+// 		"31tt3q3vt3qc",*/
+// 	}
+// }
 
 
 func hashDifference(key *big.Int, node *big.Int) *big.Int {
@@ -147,7 +151,7 @@ func hash(str string) []byte {
 	return digest[:]
 }
 
-func keyRoute(key []byte) string {
+func keyRoute(key []byte, gms *membership.MembershipService) string {
 	if len(key) == 0 {
 		return transport.GetLocalAddr()
 	}
@@ -155,7 +159,7 @@ func keyRoute(key []byte) string {
 	keyHashInt := hashInt(hex.EncodeToString(key))
 	//log.Println(hex.EncodeToString(key), " Key hash", keyHashInt.String())
 
-	nodeList := getAllNodes()
+	nodeList := gms.GetAllNodes()
 	//logger.Println(nodeList)
 
 	responsibleNode := nodeList[0]
@@ -174,13 +178,13 @@ func keyRoute(key []byte) string {
 }
 
 
-func StorageModule(ts *transport.TransportModule,reqFrom_ts chan protobuf.InternalMsg){
+func StorageModule(ts *transport.TransportModule,reqFrom_ts chan protobuf.InternalMsg, gms *membership.MembershipService){
 	for{
 		req:=<-reqFrom_ts
 		if(req.OriginAddr==""){
 			unmarshalled_payload:=&protobuf.KVRequest{}
 			proto.Unmarshal(req.Payload,unmarshalled_payload)
-			destAddr := keyRoute(unmarshalled_payload.Key)
+			destAddr := keyRoute(unmarshalled_payload.Key, gms)
 			//argsWithProg := os.Args
 			if (destAddr == transport.GetLocalAddr()){ // is it should be handles
 				response, _ := Message_handler(req.Payload)

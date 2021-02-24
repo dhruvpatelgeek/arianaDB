@@ -48,11 +48,11 @@ type Message struct {
 
 type TransportModule struct {
 	connection *net.UDPConn
-	GroupSend chan Message
+	GroupSend chan []byte
 	StorageChan chan protobuf.InternalMsg
 }
 
-func New(port int, gmsChan chan Message,StorageChan chan protobuf.InternalMsg) (*TransportModule, error) {
+func New(port int, gmsChan chan []byte,StorageChan chan protobuf.InternalMsg) (*TransportModule, error) {
 	
 	LOCAL_PORT = strconv.Itoa(port)
 
@@ -460,13 +460,14 @@ func (tm *TransportModule) gossipPrepend(payload []byte, clientAddr string) {
 	unmarshelled_payload := &protobuf.Msg{}
 	proto.Unmarshal(payload,unmarshelled_payload)
 
-	struct_to_push := Message {
-		ClientAddr: clientAddr,
-		Payload:    unmarshelled_payload.Payload,
-		MessageID:  string(unmarshelled_payload.MessageID),
-	}
+	fmt.Println(unmarshelled_payload)
+	// struct_to_push := Message {
+	// 	ClientAddr: clientAddr,
+	// 	Payload:    unmarshelled_payload.Payload,
+	// 	MessageID:  string(unmarshelled_payload.MessageID),
+	// }
 
-	tm.GroupSend <- struct_to_push;
+	tm.GroupSend <- unmarshelled_payload.Payload;
 }
 
 // node req prepend
