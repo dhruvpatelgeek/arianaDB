@@ -7,12 +7,12 @@ import (
 	"log"
 	"net"
 	"runtime"
-	"strconv"
 	"time"
 	"math/big"
 	"crypto/sha256"
 	"dht/mock_store/storage"
 	"encoding/hex"
+	"strconv"
 
 	"github.com/golang/protobuf/proto"
 	"github.com/pmylund/go-cache"
@@ -49,17 +49,67 @@ type Message struct {
 	MessageID  string
 }
 
+type TransportModule struct {
+	connection *net.UDPConn
+	GroupSend chan Message
+}
+
+func New(port int, gmsChan chan Message) (*TransportModule, error) {
+	
+	LOCAL_PORT = strconv.Itoa(port)
+
+	tm := &TransportModule{}
+	if !validPort(port) {
+		return tm, nil 
+	}
+
+	conn := listen(port)
+
+	tm.connection = conn
+	tm.GroupSend = gmsChan
+/*
+	go proportionalCollector()
+
+	go tm.daemonSpawner()
+*/
+	return tm, nil
+
+}
+
+func (tm *TransportModule) Send(payload []byte, messageID []byte, destAddr string) {
+	message, err := generateShell(payload, messageID)
+	if err != nil {
+		fmt.Println("payload gen failed");
+	}
+
+	msg := &protobuf.Msg{}
+	error := proto.Unmarshal(message, msg)
+	if error != nil {
+		log.Println("Unable to deserialize ", error)
+	}
+
+	addr, err := net.ResolveUDPAddr("udp", destAddr)
+	if err != nil {
+		log.Println("Address error ", err)
+	}
+
+	//log.Println("Sending ", destAddr)
+
+	tm.connection.WriteToUDP(message, addr)
+}
+/*
 var connection *net.UDPConn
 
 var GroupSend = make(chan Message)
+*/
 //------------------------------------------
 
 var getAllNodes = func () []string {
 	return []string {
 		"127.0.0.1:3200",
 		"127.0.0.1:3201", 
-		//"127.0.0.1:3202", 
-		//"127.0.0.1:3203", 
+		"127.0.0.1:3202", 
+		"127.0.0.1:3203", 
 		//"127.0.0.1:3204", 
 		//"127.0.0.1:3205", 
 		/*"124124124", 
@@ -186,7 +236,7 @@ func cache_data(message_id []byte,data []byte)(bool){
  * @param port
  * @return bool
  */
-func check_if_port_is_valid(port int) bool {
+func validPort(port int) bool {
 	return (port < 65535) || (port > 0)
 }
 
@@ -211,20 +261,20 @@ func calculate_checksum(a []byte, b []byte) uint64 {
  * @param conduit
  * @param thread_num
  */
-func UDP_daemon(connection *net.UDPConn, conduit chan int, thread_num int) {
+func (tm *TransportModule) UDP_daemon(connection *net.UDPConn, conduit chan int, thread_num int) {
 	if debug {
 		fmt.Println("THREAD SPAWNED->", thread_num)
 	}
 
-	buffer := make([]byte, 10100)
-	n, remoteAddr, err := connection.ReadFromUDP(buffer)
+	buffer := make([]byte, 20100)
+	n, remoteAddr, err := tm.connection.ReadFromUDP(buffer)
 	for err != nil {
 		fmt.Println("listener failed - ", err)
 		conduit <- 2
 	}
 
 	conduit <- 1
-	go router(buffer[:n], remoteAddr.String())
+	go tm.router(buffer[:n], remoteAddr.String())
 }
 
 /**
@@ -232,17 +282,17 @@ func UDP_daemon(connection *net.UDPConn, conduit chan int, thread_num int) {
  * @param _port
  * @return func()
  */
-func daemonSpawner() {
+func (tm *TransportModule) daemonSpawner() {
 	
 	var thread_num int = 0
 	conduit := make(chan int)
 	if MULTI_CORE_MODE {
 		for i := 0; i < 1; i++ {
-			go UDP_daemon(connection, conduit, thread_num)
+			go tm.UDP_daemon(tm.connection, conduit, thread_num)
 			thread_num++
 		}
 	} else {
-		go UDP_daemon(connection, conduit, thread_num)
+		go tm.UDP_daemon(tm.connection, conduit, thread_num)
 		thread_num++
 	}
 	if !debug {
@@ -253,7 +303,7 @@ func daemonSpawner() {
 		if get_mem_usage() < uint64(MEMORY_LIMIT) {
 			switch <-conduit {
 			case 1:
-				go UDP_daemon(connection, conduit, thread_num)
+				go tm.UDP_daemon(tm.connection, conduit, thread_num)
 				if thread_num % 500 == 0 {
 					log.Println(" Exited thread ", thread_num)
 				}
@@ -275,14 +325,14 @@ func daemonSpawner() {
 	}
 }
 
-func listen(port int) {
+func listen(port int) *net.UDPConn {
 	var err error
 
 	address := net.UDPAddr{
 		Port: port,
 		IP:   net.IP{0, 0, 0, 0}, // local ip address
 	}
-	connection, err = net.ListenUDP("udp", &address)
+	connection, err := net.ListenUDP("udp", &address)
 	err = connection.SetWriteBuffer(20000)
 	if err != nil {
 		fmt.Printf("[WRITE SETTING ERROR]%+v", err)
@@ -294,33 +344,22 @@ func listen(port int) {
 	}
 
 	fmt.Println("ADDRESS IS", address.IP, ":", address.Port)
+
+	return connection
 }
 
 /**
  * @Description: inialises the server based on port number
  * @param args
  */
-func Init_server(args string) {
-	port, err := strconv.Atoi(args)
-	if err != nil {
-		fmt.Printf("PORT CASTING ERROR [EXIT]")
-	}
-
-	if !check_if_port_is_valid(port) {
-		fmt.Printf("PORT NOT VALID,EXITTING...\n")
-	} else {
-		fmt.Printf("------------------\n")
-		LOCAL_PORT = args
-	}
-
-	listen(port)
-
+ 
+func (tm *TransportModule) Init_server() {
 	if MULTI_CORE_MODE {
-		fmt.Println("[MULTICORE MODE] [", runtime.NumCPU(), "] SPANNERS AT PORT [", args, "] SYS MEM LIMIT [", MEMORY_LIMIT, "]")
+		fmt.Println("[MULTICORE MODE] [", runtime.NumCPU(), "] SPANNERS AT PORT [", tm.connection.LocalAddr(), "] SYS MEM LIMIT [", MEMORY_LIMIT, "]")
 	}
 
 	go proportionalCollector()
-	daemonSpawner()
+	tm.daemonSpawner()
 
 }
 
@@ -446,30 +485,6 @@ func keyRoute(key []byte) string {
 	return responsibleNode
 }
 
-func Send(payload []byte, messageID []byte, destAddr string) {
-	message, err := generateShell(payload, messageID)
-	if err != nil {
-		fmt.Println("payload gen failed");
-	}
-
-	msg := &protobuf.Msg{}
-	error := proto.Unmarshal(message, msg)
-	if error != nil {
-		log.Println("Unable to deserialize ", error)
-	}
-
-	addr, err := net.ResolveUDPAddr("udp", destAddr)
-	if err != nil {
-		log.Println("Address error ", err)
-	}
-
-	//log.Println("Sending ", destAddr)
-
-	connection.WriteToUDP(message, addr)
-}
-
-
-
 func generateShell(payload []byte, messageId []byte) ([]byte, error){
 	checksum := calculate_checksum([]byte(messageId), payload)
 	shell := &protobuf.Msg{
@@ -486,7 +501,7 @@ func generateShell(payload []byte, messageId []byte) ([]byte, error){
 	return marshelledShell, err
 }
 
-func router(serialMsg []byte, clientAddr string){
+func (tm *TransportModule) router(serialMsg []byte, clientAddr string){
 
 	msg := &protobuf.Msg{}
 	proto.Unmarshal(serialMsg, msg)
@@ -497,30 +512,30 @@ func router(serialMsg []byte, clientAddr string){
 	if len(messageID) > 6 {
 		switch string(messageID[0:6]) {
 		case "gossip": //gossip pre pend
-			gossipPrepend(payload, clientAddr)
+			tm.gossipPrepend(payload, clientAddr)
 			//log.Println("gossip")
 		case "reques": // node req prepend
-			nodePrePend(payload, messageID[6:])
+			tm.nodeReq(payload, messageID[6:])
 			//log.Println("reques")
 		case "respos": //resposnse prepend
-			resPrepend(payload, messageID[6:])
+			tm.nodeRes(payload, messageID[6:])
 			//log.Println("respos")
 		default: // no pre pend
 			//log.Println("default-> no prepend")
-			noPrePend(payload, messageID, clientAddr)
+			tm.clientReq(payload, messageID, clientAddr)
 		}
 	} else {
 		//log.Println("default-> no prepend")
-		noPrePend(payload, messageID, clientAddr)
+		tm.clientReq(payload, messageID, clientAddr)
 	}
 }
 
 // no pre pend
-func noPrePend(payload []byte, messageID []byte, clientAddr string) {
+func (tm *TransportModule) clientReq(payload []byte, messageID []byte, clientAddr string) {
 	cachedResponse, found := check_cache(messageID)
 
 	if found {
-		Send(cachedResponse, messageID, clientAddr)
+		tm.Send(cachedResponse, messageID, clientAddr)
 	} else {
 		kvreq := &protobuf.KVRequest{}
 		error := proto.Unmarshal(payload, kvreq)
@@ -535,7 +550,7 @@ func noPrePend(payload []byte, messageID []byte, clientAddr string) {
 		if (destAddr == "127.0.0.1:" + LOCAL_PORT){
 			response, _ := storage.Message_handler(payload)
 			cache_data(messageID, response)
-			Send(response, messageID, clientAddr)
+			tm.Send(response, messageID, clientAddr)
 		} else {
 			internalPayload := &protobuf.InternalMsg{
 				ClientAddr: clientAddr,
@@ -546,13 +561,13 @@ func noPrePend(payload []byte, messageID []byte, clientAddr string) {
 			if err != nil {
 				log.Println("[ERTICAL CASTINF ERROR][234]")
 			} else {
-				Send(marshalled_internalPayload, append([]byte("reques"), messageID...), destAddr)
+				tm.Send(marshalled_internalPayload, append([]byte("reques"), messageID...), destAddr)
 			}
 		}
 	}
 }
 
-func gossipPrepend(payload []byte, clientAddr string) {
+func (tm *TransportModule) gossipPrepend(payload []byte, clientAddr string) {
 	unmarshelled_payload := &protobuf.Msg{}
 	proto.Unmarshal(payload,unmarshelled_payload)
 
@@ -562,11 +577,11 @@ func gossipPrepend(payload []byte, clientAddr string) {
 		MessageID:  string(unmarshelled_payload.MessageID),
 	}
 
-	GroupSend <- struct_to_push;
+	tm.GroupSend <- struct_to_push;
 }
 
 // node req prepend
-func nodePrePend(node2nodePayload []byte, messageID []byte){
+func (tm *TransportModule) nodeReq(node2nodePayload []byte, messageID []byte){
 	node2nodeMsg := &protobuf.InternalMsg{}
 
 	proto.Unmarshal(node2nodePayload, node2nodeMsg)
@@ -577,7 +592,7 @@ func nodePrePend(node2nodePayload []byte, messageID []byte){
 
 	cachedResponse, found := check_cache(messageID)
 	if found {
-		Send(cachedResponse, messageID, clientAddr)
+		tm.Send(cachedResponse, messageID, clientAddr)
 	} else {
 		response, _ := storage.Message_handler(reqPayload)
 		cache_data(messageID, response)
@@ -592,11 +607,11 @@ func nodePrePend(node2nodePayload []byte, messageID []byte){
 			log.Println("[ERTICAL CASTINF ERROR][234]")
 		}
 
-		Send(internalPayload, append([]byte("respos"), messageID...), originAddr)
+		tm.Send(internalPayload, append([]byte("respos"), messageID...), originAddr)
 	}
 }
 
-func resPrepend(node2nodePayload []byte, messageID []byte){
+func (tm * TransportModule) nodeRes(node2nodePayload []byte, messageID []byte){
 	// send the internalPayload to the client
 	node2nodeMsg := &protobuf.InternalMsg{}
 	proto.Unmarshal(node2nodePayload, node2nodeMsg)
@@ -604,5 +619,5 @@ func resPrepend(node2nodePayload []byte, messageID []byte){
 	response := node2nodeMsg.GetPayload()
 
 	cache_data(messageID, response)
-	Send(response, messageID, node2nodeMsg.GetClientAddr())
+	tm.Send(response, messageID, node2nodeMsg.GetClientAddr())
 }
