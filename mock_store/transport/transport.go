@@ -4,7 +4,6 @@ import (
 	"crypto/sha256"
 	"dht/google_protocol_buffer/pb/protobuf"
 	"dht/mock_store/storage"
-	"encoding/hex"
 	"fmt"
 	"hash/crc32"
 	"log"
@@ -149,6 +148,7 @@ var getAllNodes = func () []string {
 func proportionalCollector() {
 	var sleepCtr time.Duration = 1000*time.Millisecond
 	for {
+		//log.Println("GC")
 		time.Sleep(sleepCtr)
 		sleepCtr = sleepCurve()
 		runtime.GC()
@@ -160,15 +160,15 @@ func sleepCurve() time.Duration {
 	runtime.ReadMemStats(&m)
 	currentMem := bToMb((m.Alloc))
 	//fmt.Println(currentMem)
-	if currentMem < 100 {
+	if currentMem < 70 {
 		return 5*time.Second
-	} else if currentMem < 105 {
+	} else if currentMem < 80 {
 		return 100*time.Millisecond
-	} else if currentMem < 110 {
+	} else if currentMem < 90 {
 		return 50*time.Millisecond
-	} else if currentMem < 115 {
+	} else if currentMem < 100 {
 		return 10*time.Millisecond
-	} else if currentMem < 120 {
+	} else if currentMem < 110 {
 		//fmt.Println("CRITICAL MEMORY")
 		return time.Millisecond
 	} else {
@@ -311,7 +311,7 @@ func (tm *TransportModule) daemonSpawner() {
 			case 1:
 				go tm.UDP_daemon(tm.connection, conduit, thread_num)
 				if thread_num % 500 == 0 {
-					log.Println(" Exited thread ", thread_num)
+					//log.Println(" Exited thread ", thread_num)
 				}
 				thread_num++
 			case 2:

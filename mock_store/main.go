@@ -5,13 +5,13 @@ import (
 	"log"
 	"os"
 	"strconv"
-	"dht/mock_store/transport"
 )
 
 
 func main() {
 
 	var GroupSend = make(chan transport.Message)
+
 
 	log.Println("MAIN 122")
 	argsWithProg := os.Args
