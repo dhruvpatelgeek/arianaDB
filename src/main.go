@@ -42,7 +42,7 @@ func main() {
 	go storage.StorageModule(transport, storageChannel, x)
 
 	for {
-		time.Sleep(1 * time.Second) // just so the app doesn't close after finishing execution.
+		time.Sleep(5 * time.Second) // just so the app doesn't close after finishing execution.
 		allMembers := x.GetAllNodes()
 		fmt.Println(allMembers)
 	}

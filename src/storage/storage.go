@@ -91,29 +91,6 @@ var mutex sync.Mutex
 // 		//"127.0.0.1:3203",
 // 		//"127.0.0.1:3204",
 // 		//"127.0.0.1:3205",
-// 		/*"124124124",
-// 		"124124124234",
-// 		"21638492872",
-// 		"5bwtry w45yb",
-// 		"erbtq3vtq 3",
-// 		"visdvcgwfw7",
-// 		"fsiufwgfiuba",
-// 		"34 t13q3vt3qc",
-// 		"31tt3q3vt3qc",
-// 		"31tt3q3vt3qc",
-// 		"31tt3q3vt3qc",
-// 		"31tt3q3vt3qc",
-// 		"31tt3q3vt3qc",
-// 		"31tt3q3vt3qc",
-// 		"31tt3q3vt3qc",
-// 		"31tt3q3vt3qc",
-// 		"31tt3q3vt3qc",
-// 		"31tt3q3vt3qc",
-// 		"31tt3q3vt3qc",
-// 		"31tt3q3vt3qc",
-// 		"31tt3q3vt3qc",
-// 		"31tt3q3vt3qc",
-// 		"31tt3q3vt3qc",*/
 // 	}
 // }
 
@@ -352,6 +329,7 @@ func remove(key []byte) []byte {
 		return out
 
 	} else {
+		mutex.Unlock()
 		errCode = NO_KEY
 
 		payload := &protobuf.KVResponse{
@@ -380,10 +358,6 @@ func shutdown() {
  */
 func wipeout() []byte {
 	mutex.Lock() //<<<<<<<<<<<<<<<MAP LOCK
-	/*
-	for k := range storage {
-		delete(storage, k)
-	}*/
 	storage = make(map[string][]byte)
 	mutex.Unlock() //<<<<<<<<<<<<<<<MAP UNLOCK
 	var errCode uint32 = OK
@@ -393,8 +367,6 @@ func wipeout() []byte {
 	if err != nil {
 		log.Fatalln("Failed to encode address book:", err)
 	}
-
-	log.Println("Wipeout ", payload)
 
 	return out
 }

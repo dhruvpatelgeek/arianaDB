@@ -210,7 +210,7 @@ func (gms *MembershipService) bootstrap(initialMembers []string) {
 
 			marshalledJoinRequest, err := proto.Marshal(joinRequest)
 			if err == nil {
-				fmt.Println("Sending join request to ", address, joinRequest)
+				fmt.Println("Sending join request to ", address)
 				gms.transport.Send(marshalledJoinRequest, generateMessageID(), address)
 			} else {
 				fmt.Println(err)
