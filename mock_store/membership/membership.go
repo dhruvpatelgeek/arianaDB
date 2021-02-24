@@ -230,13 +230,11 @@ func (gms *MembershipService) listenToReceiveChannel() {
 
 func (gms *MembershipService) processMessage(msgReceived []byte) {
 	membershipRequest, err := unmarshalMembershipRequest(msgReceived)
-
 	if err != nil {
 		fmt.Println(err)
 		return
 	}
 
-	fmt.Println(membershipRequest.GetCommand())
 	switch membershipRequest.GetCommand() {
 	case SendJoinCommand:
 		err := gms.processSendJoinRequest(membershipRequest)

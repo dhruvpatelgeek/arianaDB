@@ -457,17 +457,7 @@ func (tm *TransportModule) clientReq(payload []byte, messageID []byte, clientAdd
 }
 
 func (tm *TransportModule) gossipPrepend(payload []byte, clientAddr string) {
-	unmarshelled_payload := &protobuf.Msg{}
-	proto.Unmarshal(payload,unmarshelled_payload)
-
-	fmt.Println(unmarshelled_payload)
-	// struct_to_push := Message {
-	// 	ClientAddr: clientAddr,
-	// 	Payload:    unmarshelled_payload.Payload,
-	// 	MessageID:  string(unmarshelled_payload.MessageID),
-	// }
-
-	tm.GroupSend <- unmarshelled_payload.Payload;
+	tm.GroupSend <- payload;
 }
 
 // node req prepend
