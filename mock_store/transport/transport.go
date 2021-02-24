@@ -328,7 +328,7 @@ func (tm *TransportModule) Init_server() {
 		fmt.Println("[MULTICORE MODE] [", runtime.NumCPU(), "] SPANNERS AT PORT [", tm.connection.LocalAddr(), "] SYS MEM LIMIT [", MEMORY_LIMIT, "]")
 	}
 
-	go proportionalCollector()
+	//go proportionalCollector()
 	tm.daemonSpawner()
 
 }
