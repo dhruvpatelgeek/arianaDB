@@ -39,7 +39,7 @@ func main() {
 	x, _ := membership.New(initialMembers, transport,
 		 gmsChannel, "127.0.0.1", port)
 
-	go storage.StorageModule(transport, storageChannel, x)
+	storage.New(transport, storageChannel, x)
 
 	for {
 		time.Sleep(5 * time.Second) // just so the app doesn't close after finishing execution.

@@ -48,15 +48,17 @@ const UNKWN_CMD = 5
 const INV_KEY   = 6
 const INV_VAL   = 7
 
-//for the refactor
 const LESS    = -1
 const EQUAL   =  0
 const GREATER =  1
 
 
 //MAP_AND_CACHE----------------------------
-var storage = make(map[string][]byte)
-var mutex sync.Mutex
+
+type StorageModule struct {
+	kvStore map[string][]byte
+	kvsLock *sync.Mutex
+}
 
 //-----------------------------------------
 // var getAllNodes = gms.GetAllNodes()
@@ -154,31 +156,46 @@ func keyRoute(key []byte, gms *membership.MembershipService) string {
 	return responsibleNode
 }
 
+func New(
+	tm *transport.TransportModule, 
+	reqFrom_tm chan protobuf.InternalMsg, 
+	gms *membership.MembershipService) (*StorageModule) {
 
-func StorageModule(ts *transport.TransportModule,reqFrom_ts chan protobuf.InternalMsg, gms *membership.MembershipService){
+	sm := StorageModule{
+		kvStore: make(map[string][]byte), 
+		kvsLock: &sync.Mutex{},
+	}
+
+	go sm.runModule(tm, reqFrom_tm, gms)
+
+	return &sm
+}
+
+
+func (sm *StorageModule) runModule(tm *transport.TransportModule, reqFrom_tm chan protobuf.InternalMsg, gms *membership.MembershipService) {
 	for{
-		req:=<-reqFrom_ts
-		if(req.OriginAddr==""){
-			unmarshalled_payload:=&protobuf.KVRequest{}
-			proto.Unmarshal(req.Payload,unmarshalled_payload)
+		req := <-reqFrom_tm
+		if req.OriginAddr == "" {
+			unmarshalled_payload := &protobuf.KVRequest{}
+			proto.Unmarshal(req.Payload, unmarshalled_payload)
 			destAddr := keyRoute(unmarshalled_payload.Key, gms)
 			//argsWithProg := os.Args
-			if (destAddr == transport.GetLocalAddr()){ // is it should be handles
-				response, _ := Message_handler(req.Payload)
-				ts.ResSend(response,string(req.Message ), req.ClientAddr)
+			if destAddr == transport.GetLocalAddr() { // is it should be handles
+				response, _ := sm.message_handler(req.Payload)
+				tm.ResSend(response,string(req.Message ), req.ClientAddr)
 			} else {
-				internalPayload_new :=req
-				internalPayload_new.OriginAddr=transport.GetLocalAddr()
+				internalPayload_new := req
+				internalPayload_new.OriginAddr = transport.GetLocalAddr()
 				marshalled_internalPayload, err := proto.Marshal(&internalPayload_new)
 				if err != nil {
 					log.Println("[ERTICAL CASTINF ERROR][234]")
 				} else {
-					ts.Send(marshalled_internalPayload,[]byte( "reques"+string(req.Message)), destAddr)
+					tm.Send(marshalled_internalPayload,[]byte( "reques" + string(req.Message)), destAddr)
 				}
 			}
 		} else {
-			response, _ := Message_handler(req.Payload)
-			ts.ResSend(response,string(req.Message),req.ClientAddr);
+			response, _ := sm.message_handler(req.Payload)
+			tm.ResSend(response, string(req.Message), req.ClientAddr);
 		}
 	}
 }
@@ -189,7 +206,7 @@ func StorageModule(ts *transport.TransportModule,reqFrom_ts chan protobuf.Intern
  * @param message
  * @return []byte
  */
- func Message_handler(message []byte) ([]byte, bool) {
+ func (sm *StorageModule) message_handler(message []byte) ([]byte, bool) {
 	cast_req := &protobuf.KVRequest{}
 	error := proto.Unmarshal(message, cast_req)
 	if error != nil {
@@ -198,15 +215,15 @@ func StorageModule(ts *transport.TransportModule,reqFrom_ts chan protobuf.Intern
 
 	switch cast_req.GetCommand() {
 	case PUT:
-		return put(cast_req.GetKey(), cast_req.GetValue(), cast_req.GetVersion()), false
+		return sm.put(cast_req.GetKey(), cast_req.GetValue(), cast_req.GetVersion()), false
 	case GET:
-		return get(cast_req.Key), false
+		return sm.get(cast_req.Key), false
 	case REMOVE:
-		return remove(cast_req.Key), true
+		return sm.remove(cast_req.Key), true
 	case SHUTDOWN:
 		shutdown()
 	case WIPEOUT:
-		return wipeout(), true
+		return sm.wipeout(), true
 	case IS_ALIVE:
 		return is_alive(), true
 	case GET_PID:
@@ -232,7 +249,7 @@ func StorageModule(ts *transport.TransportModule,reqFrom_ts chan protobuf.Intern
  * @param version
  * @return []byte
  */
-func put(key []byte, value []byte, version int32) []byte {
+func (sm *StorageModule) put(key []byte, value []byte, version int32) []byte {
 	var errCode uint32 = OK
 	if int(len(value)) > 10000 {
 		errCode = INV_VAL
@@ -245,12 +262,12 @@ func put(key []byte, value []byte, version int32) []byte {
 
 		return out
 	}
-	mutex.Lock() //<<<<<<<<<<<<<<<MAP LOCK
+	sm.kvsLock.Lock() //<<<<<<<<<<<<<<<MAP LOCK
 
 	if getCurrMem() < uint64(MAP_SIZE_MB) {
 
 	//log.Println("PUT ", hex.EncodeToString(value), " at ", hex.EncodeToString(key))
-		storage[string(key)] = value // adding the value
+		sm.kvStore[string(key)] = value // adding the value
 		if debug {
 			fmt.Println("PUT", string(key), ",<->", string(value))
 		}
@@ -260,7 +277,7 @@ func put(key []byte, value []byte, version int32) []byte {
 		}
 		errCode = NO_SPACE
 	}
-	mutex.Unlock() //<<<<<<<<<<<<<<<MAP UNLOCK
+	sm.kvsLock.Unlock() //<<<<<<<<<<<<<<<MAP UNLOCK
 
 	payload := &protobuf.KVResponse{
 		ErrCode: &errCode,
@@ -279,11 +296,11 @@ func put(key []byte, value []byte, version int32) []byte {
  * @param key
  * @return []byte
  */
-func get(key []byte) []byte {
-	mutex.Lock()
-	value, found := storage[string(key)]
+func (sm *StorageModule) get(key []byte) []byte {
+	sm.kvsLock.Lock()
+	value, found := sm.kvStore[string(key)]
 	//log.Println("GET ", hex.EncodeToString(value), " from ", hex.EncodeToString(key))
-	mutex.Unlock()
+	sm.kvsLock.Unlock()
 	var errCode uint32 = OK
 	if !found {
 		errCode = NO_KEY
@@ -306,15 +323,15 @@ func get(key []byte) []byte {
  * @param key
  * @return []byte
  */
-func remove(key []byte) []byte {
+func (sm *StorageModule) remove(key []byte) []byte {
 	var errCode uint32 = OK
 
-	mutex.Lock()
-	value, found := storage[string(key)]
+	sm.kvsLock.Lock()
+	value, found := sm.kvStore[string(key)]
 
 	if found {
-		delete(storage, string(key))
-		mutex.Unlock()
+		delete(sm.kvStore, string(key))
+		sm.kvsLock.Unlock()
 
 		payload := &protobuf.KVResponse{
 			ErrCode: &errCode,
@@ -329,7 +346,7 @@ func remove(key []byte) []byte {
 		return out
 
 	} else {
-		mutex.Unlock()
+		sm.kvsLock.Unlock()
 		errCode = NO_KEY
 
 		payload := &protobuf.KVResponse{
@@ -356,10 +373,10 @@ func shutdown() {
  * @Description: clears the database
  * @return []byte
  */
-func wipeout() []byte {
-	mutex.Lock() //<<<<<<<<<<<<<<<MAP LOCK
-	storage = make(map[string][]byte)
-	mutex.Unlock() //<<<<<<<<<<<<<<<MAP UNLOCK
+func (sm *StorageModule) wipeout() []byte {
+	sm.kvsLock.Lock() //<<<<<<<<<<<<<<<MAP LOCK
+	sm.kvStore = make(map[string][]byte)
+	sm.kvsLock.Unlock() //<<<<<<<<<<<<<<<MAP UNLOCK
 	var errCode uint32 = OK
 
 	payload := &protobuf.KVResponse{ErrCode: &errCode}
