@@ -18,10 +18,10 @@ RUN go mod download
 COPY . .
 
 # Build the app
-RUN go build mock_store/store.go 
+RUN go build mock_store/main.go
 
 # Run the app
-CMD go run mock_store/store.go 3200
+CMD go run mock_store/main.go 3200
 
 #expose 
 EXPOSE 3200/udp
