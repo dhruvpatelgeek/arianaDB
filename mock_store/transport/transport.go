@@ -1,19 +1,19 @@
 package transport
 
 import (
+	"crypto/sha256"
+	"dht/google_protocol_buffer/pb/protobuf"
+	"dht/mock_store/storage"
+	"encoding/hex"
 	"fmt"
 	"hash/crc32"
-	"dht/google_protocol_buffer/pb/protobuf"
 	"log"
+	"math/big"
 	"net"
 	"os"
 	"runtime"
 	"strconv"
 	"time"
-	"math/big"
-	"crypto/sha256"
-	"dht/mock_store/storage"
-	"encoding/hex"
 
 	"github.com/golang/protobuf/proto"
 	"github.com/pmylund/go-cache"
@@ -61,8 +61,8 @@ var GroupSend = make(chan Message)
 
 var getAllNodes = func () []string {
 	return []string {
-		"127.0.0.1:3200",
-		"127.0.0.1:3201", 
+		localAddr,
+		//"127.0.0.1:3201",
 		//"127.0.0.1:3202", 
 		//"127.0.0.1:3203", 
 		//"127.0.0.1:3204", 
@@ -628,7 +628,6 @@ func getLocalAddr() string {
 	port_num:=argsWithProg[1]
 
 	return localAddr.IP.String()+":"+port_num
-
 }
 
 func init(){
