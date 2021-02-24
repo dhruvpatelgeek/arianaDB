@@ -1,13 +1,13 @@
 package storage
 
 import (
-	"fmt"
 	"dht/google_protocol_buffer/pb/protobuf"
+	"fmt"
 	"log"
 	"os"
+	"runtime"
 	"sync"
 	"syscall"
-	"unsafe"
 	//"encoding/hex"
 
 	"github.com/golang/protobuf/proto"
@@ -21,7 +21,7 @@ import (
 
 //CONTROL PANEL----------------------------
 var debug = false
-var MAP_SIZE_MB = 70
+var MAP_SIZE_MB = 128 // memory HARD LIMIT
 
 // Command numbers
 const PUT      = 1
@@ -110,7 +110,7 @@ func put(key []byte, value []byte, version int32) []byte {
 	}
 	mutex.Lock() //<<<<<<<<<<<<<<<MAP LOCK
 
-	if bToMb(uint64(unsafe.Sizeof(storage))) < uint64(MAP_SIZE_MB) {
+	if getCurrMem() < uint64(MAP_SIZE_MB) {
 
 	//log.Println("PUT ", hex.EncodeToString(value), " at ", hex.EncodeToString(key))
 		storage[string(key)] = value // adding the value
@@ -297,4 +297,11 @@ func getmemcount() []byte {
 
 func bToMb(b uint64) uint64 {
 	return b / 1024 / 1024
+}
+
+
+func getCurrMem() uint64 {
+	var m runtime.MemStats
+	runtime.ReadMemStats(&m)
+	return bToMb((m.Alloc))
 }

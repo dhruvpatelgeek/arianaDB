@@ -1,16 +1,18 @@
 package transport
 
 import (
+	"crypto/sha256"
+	"dht/google_protocol_buffer/pb/protobuf"
+	"dht/mock_store/storage"
+	"encoding/hex"
 	"fmt"
 	"hash/crc32"
-	"dht/google_protocol_buffer/pb/protobuf"
 	"log"
+	"math/big"
 	"net"
+	"os"
 	"runtime"
 	"time"
-	"math/big"
-	"crypto/sha256"
-	"dht/mock_store/storage"
 	"encoding/hex"
 	"strconv"
 
@@ -39,6 +41,10 @@ const GREATER =  1
 
 var LOCAL_PORT string
 
+//-----------------------------------------
+
+//LOCAL ADDRESS----------------------------
+var localAddr string="127.0.0.1:3200" // placeholder
 //-----------------------------------------
 
 //CONNECTION-------------------------------
@@ -106,10 +112,10 @@ var GroupSend = make(chan Message)
 
 var getAllNodes = func () []string {
 	return []string {
-		"127.0.0.1:3200",
-		"127.0.0.1:3201", 
-		"127.0.0.1:3202", 
-		"127.0.0.1:3203", 
+		localAddr,
+		//"127.0.0.1:3201",
+		//"127.0.0.1:3202", 
+		//"127.0.0.1:3203", 
 		//"127.0.0.1:3204", 
 		//"127.0.0.1:3205", 
 		/*"124124124", 
@@ -547,14 +553,14 @@ func (tm *TransportModule) clientReq(payload []byte, messageID []byte, clientAdd
 
 		destAddr := keyRoute(kvreq.GetKey())
 		//argsWithProg := os.Args
-		if (destAddr == "127.0.0.1:" + LOCAL_PORT){
+		if (destAddr == localAddr){
 			response, _ := storage.Message_handler(payload)
 			cache_data(messageID, response)
 			tm.Send(response, messageID, clientAddr)
 		} else {
 			internalPayload := &protobuf.InternalMsg{
 				ClientAddr: clientAddr,
-				OriginAddr: "127.0.0.1:" + LOCAL_PORT,
+				OriginAddr: localAddr,
 				Payload:    payload,
 			}
 			marshalled_internalPayload, err := proto.Marshal(internalPayload)
@@ -620,4 +626,27 @@ func (tm * TransportModule) nodeRes(node2nodePayload []byte, messageID []byte){
 
 	cache_data(messageID, response)
 	tm.Send(response, messageID, node2nodeMsg.GetClientAddr())
+}
+
+// grt local address
+
+//https://stackoverflow.com/questions/23558425/how-do-i-get-the-local-ip-address-in-go
+//retunr the local address of the machine
+func getLocalAddr() string {
+	conn, err := net.Dial("udp", "8.8.8.8:80")
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer conn.Close()
+
+	localAddr := conn.LocalAddr().(*net.UDPAddr)
+	argsWithProg := os.Args
+	port_num:=argsWithProg[1]
+
+	return localAddr.IP.String()+":"+port_num
+}
+
+func init(){
+	localAddr=getLocalAddr()
+	fmt.Println("SERVER INITIALIZED AT",localAddr);
 }
