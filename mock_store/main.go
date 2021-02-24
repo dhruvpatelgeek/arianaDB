@@ -1,9 +1,9 @@
 package main
 
-import ( 
+import (
+	"dht/mock_store/transport"
 	"log"
 	"os"
-	"dht/mock_store/transport"
 )
 
 
@@ -17,3 +17,4 @@ func main() {
 	}
 
 }
+

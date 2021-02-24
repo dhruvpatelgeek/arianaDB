@@ -6,6 +6,7 @@ import (
 	"dht/google_protocol_buffer/pb/protobuf"
 	"log"
 	"net"
+	"os"
 	"runtime"
 	"strconv"
 	"time"
@@ -39,6 +40,10 @@ const GREATER =  1
 
 var LOCAL_PORT string
 
+//-----------------------------------------
+
+//LOCAL ADDRESS----------------------------
+var localAddr string="127.0.0.1:3200" // placeholder
 //-----------------------------------------
 
 //CONNECTION-------------------------------
@@ -532,14 +537,14 @@ func noPrePend(payload []byte, messageID []byte, clientAddr string) {
 
 		destAddr := keyRoute(kvreq.GetKey())
 		//argsWithProg := os.Args
-		if (destAddr == "127.0.0.1:" + LOCAL_PORT){
+		if (destAddr == localAddr){
 			response, _ := storage.Message_handler(payload)
 			cache_data(messageID, response)
 			Send(response, messageID, clientAddr)
 		} else {
 			internalPayload := &protobuf.InternalMsg{
 				ClientAddr: clientAddr,
-				OriginAddr: "127.0.0.1:" + LOCAL_PORT,
+				OriginAddr: localAddr,
 				Payload:    payload,
 			}
 			marshalled_internalPayload, err := proto.Marshal(internalPayload)
@@ -595,7 +600,7 @@ func nodePrePend(node2nodePayload []byte, messageID []byte){
 		Send(internalPayload, append([]byte("respos"), messageID...), originAddr)
 	}
 }
-
+// res prepend
 func resPrepend(node2nodePayload []byte, messageID []byte){
 	// send the internalPayload to the client
 	node2nodeMsg := &protobuf.InternalMsg{}
@@ -605,4 +610,28 @@ func resPrepend(node2nodePayload []byte, messageID []byte){
 
 	cache_data(messageID, response)
 	Send(response, messageID, node2nodeMsg.GetClientAddr())
+}
+
+// grt local address
+
+//https://stackoverflow.com/questions/23558425/how-do-i-get-the-local-ip-address-in-go
+//retunr the local address of the machine
+func getLocalAddr() string {
+	conn, err := net.Dial("udp", "8.8.8.8:80")
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer conn.Close()
+
+	localAddr := conn.LocalAddr().(*net.UDPAddr)
+	argsWithProg := os.Args
+	port_num:=argsWithProg[1]
+
+	return localAddr.IP.String()+":"+port_num
+
+}
+
+func init(){
+	localAddr=getLocalAddr()
+	fmt.Println("SERVER INITIALIZED AT",localAddr);
 }
