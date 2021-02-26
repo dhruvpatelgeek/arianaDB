@@ -1,6 +1,7 @@
 # Spirit of Fire
-To build the project, run the command: `docker build -t dht .`
-To run the project, run the command: `docker run -it -p 3000:3000/udp -v <folder-path-to-servers.txt>:/etc/cpen431 cpen431 ./dht-server 3000 /etc/cpen431/servers.txt`
+### Instructions
+1. To build the project, run the command: `docker build -t dht .`
+2. To run the project, run the command: `docker run -it -p 3000:3000/udp -v <folder-path-to-servers.txt>:/etc/cpen431 cpen431 ./dht-server 3000 /etc/cpen431/servers.txt`
 For example, if servers.txt exists in "/hello/world/server.txt" in the host, then run the command: `docker run -it -p 3000:3000/udp -v /hello/world/server.txt:/etc/cpen431 cpen431 ./dht-server 3000 /etc/cpen431/servers.txt`
 
 ### System Overview
@@ -23,3 +24,5 @@ Although inefficient when we scale, we implemented this algorithm because the ma
 
 We implemented two timeouts to be more tolerant to packet losses. If we removed nodes when the node detects for failures every ***T_fail*** ms, there is a chance that a heartbeat is not received due to packet loss or because by chance, the sender did not choose to send to this node.
 By having a cleanup period ***T_cleanup*** >>> ***T_fail***, we can build more confidence that a node has truly failied. 
+#### Other Considerations
+Initially, we implemented Chord's gossip protocol for the group membership service by having nodes gossip to its neighbours. However, we did not like how long a gossip propagated throughout the network, and thought it would scale poorly with 50+ nodes by milestone 3.
