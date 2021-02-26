@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"math/rand"
 	"net"
+	"strconv"
 	"sync"
 	"time"
 
@@ -45,16 +46,19 @@ type MembershipService struct {
 	receiveChannel  chan []byte
 }
 
-// New Creates a new instance of the GroupMembershipService which manages the set of members in the service.
+// New creates a new instance of the GroupMembershipService which manages the set of members in the service.
 // On start up, the node will spawn a thread for listening to the receiveChannel. All group membership service operations
 // must be requested through the receiveChannel.
 //
 // During the construction, this node will bootstrap by attempting to connect to all members given as the "initialMembers".
-// If this node failChecked to connect to a node in the "initialMembers", it will gossip to others that the node failChecked.
+// If this node failChecked to connect to a node in the "initialMembers", it will ignore the failed node.
 //
-// Current implementation listens and processes messages in a single-thread to minimize memory footprint.
+// Current implementation uses 4 threads:
+// 	- worker thread who listens and processes messages
+//	- heartbeat thread who periodically sends a heartbeat message to a subset of its memberslist
+//	- "fail" thread who periodically checks if a heartbeat was received in a reasonable amount of time.
+//	- "cleanup" thread who periodically removes all "failed" nodes from the members list.
 //
-// - assumes all arguments are not nil
 func New(
 	initialMembers []string,
 	transport *transport.TransportModule,
@@ -71,7 +75,16 @@ func New(
 	if ip := net.ParseIP(myAddress); ip == nil {
 		return nil, errors.New("invalid self-ip address to create new membership service")
 	}
+	parsedPort, err := strconv.Atoi(myPort)
+	if err != nil {
+		return nil, errors.New("Failed to parse port")
+	}
+	if parsedPort < 0 || parsedPort > 65535 {
+		return nil, errors.New("Invalid port number")
+	}
+
 	gms.address = myAddress + ":" + myPort
+
 	// add itself to the membership
 	gms.membersListLock.Lock()
 	gms.members[gms.address] = createNewMembersListValue() // add itself to the membership
@@ -92,7 +105,6 @@ func New(
 }
 
 func (gms *MembershipService) failCheck() {
-
 	for {
 		// sleep for a certain amount of time
 		time.Sleep(TimeFail * time.Millisecond)
@@ -102,8 +114,6 @@ func (gms *MembershipService) failCheck() {
 		for addr := range gms.members {
 			if addr != gms.address && gms.members[addr].heartbeatTimestamp < checkTime-TimeFail {
 				gms.members[addr].isAlive = false
-				// fmt.Println("Node failChecked, but won't clean up yet")
-				// fmt.Sprintln("Node %s failChecked, but won't clean up yet")
 			}
 		}
 		gms.membersListLock.Unlock()
@@ -118,10 +128,8 @@ func (gms *MembershipService) cleanupCheck() {
 
 		// iterate through membership lists and check if failChecked:
 		gms.membersListLock.Lock()
-		for member, element := range gms.members { // TODO: see if we can modify the value using regular syntax instead of worrying about pass-by-value?
-			// TODO: Need to modify here:
+		for member, element := range gms.members {
 			if !element.isAlive && element.heartbeatTimestamp < getCurrentTimeInMilliSec()-TimeCleanup {
-				fmt.Sprintln("removing node %s from membership during cleanupCheck", member)
 				delete(gms.members, member)
 			}
 		}
@@ -131,8 +139,6 @@ func (gms *MembershipService) cleanupCheck() {
 }
 
 func (gms *MembershipService) heartbeat() {
-	// TODO: implement this
-
 	for {
 		// sleep for a cretain amount of time.
 		time.Sleep(TimeHeartbeat * time.Millisecond)
@@ -187,12 +193,6 @@ func (gms *MembershipService) chooseRandomKey() string {
 	return ""
 }
 
-// TODO: modify this function later:
-// func MapRandomKeyGet(mapI interface{}) interface{} {
-// 	keys := reflect.ValueOf(mapI).MapKeys() // TODO: error being thrown here
-
-// 	return keys[rand.Intn(len(keys))].Interface()
-// }
 func getCurrentTimeInMilliSec() int64 {
 	return time.Now().UnixNano() / int64(time.Millisecond)
 }
@@ -211,9 +211,6 @@ func (gms *MembershipService) processHeartbeat(request *protobuf.MembershipReq) 
 			gms.members[address] = createNewMembersListValue()
 		}
 	}
-	// if len(gms.members) == 15 {
-	// 	fmt.Println("All nodes know each other!")
-	// }
 
 	gms.members[destination].heartbeatTimestamp = getCurrentTimeInMilliSec()
 	gms.members[destination].isAlive = true
@@ -256,7 +253,7 @@ func (gms *MembershipService) listenToReceiveChannel() {
 func (gms *MembershipService) processMessage(msgReceived []byte) {
 	membershipRequest, err := unmarshalMembershipRequest(msgReceived)
 	if err != nil {
-		fmt.Println(err)
+		fmt.Errorf("", err)
 		return
 	}
 
@@ -264,17 +261,17 @@ func (gms *MembershipService) processMessage(msgReceived []byte) {
 	case SendJoinCommand:
 		err := gms.processSendJoinRequest(membershipRequest)
 		if err != nil {
-			fmt.Println(err)
+			fmt.Errorf("", err)
 		}
 
 	case HeartbeatGossipCommand:
 		err := gms.processHeartbeat(membershipRequest)
 		if err != nil {
-			fmt.Println(err)
+			fmt.Errorf("", err)
 		}
 
 	default:
-		fmt.Printf("[ERROR] Undefined command received in Group Membership Service")
+		fmt.Errorf("[ERROR] Undefined command received in Group Membership Service")
 	}
 }
 
@@ -293,6 +290,7 @@ func (gms *MembershipService) processSendJoinRequest(request *protobuf.Membershi
 	gms.members[destination].heartbeatTimestamp = getCurrentTimeInMilliSec()
 	gms.members[destination].isAlive = true
 	gms.membersListLock.Unlock()
+
 	// create a join request to be sent to destination
 	MReq := &protobuf.MembershipReq{
 		SourceAddress: gms.address,
@@ -365,7 +363,6 @@ func unmarshalMembershipRequest(list []byte) (*protobuf.MembershipReq, error) {
 	return MReq, nil
 }
 
-// TODO: atomic operations for accessing members lists
 func createNewMembersListValue() *membersListValue {
 	val := membersListValue{
 		isAlive:            false,
