@@ -1,11 +1,14 @@
 package storage
 
 import (
+	"bytes"
+	"compress/gzip"
 	"crypto/sha256"
 	"dht/google_protocol_buffer/pb/protobuf"
 	"dht/src/membership"
 	"encoding/hex"
 	"fmt"
+	"io/ioutil"
 	"log"
 	"math/big"
 	"os"
@@ -30,28 +33,27 @@ var debug = false
 var MAP_SIZE_MB = 128000000000000000 // memory HARD LIMIT
 
 // Command numbers
-const PUT      = 1
-const GET      = 2
-const REMOVE   = 3
+const PUT = 1
+const GET = 2
+const REMOVE = 3
 const SHUTDOWN = 4
-const WIPEOUT  = 5
+const WIPEOUT = 5
 const IS_ALIVE = 6
-const GET_PID  = 7
-const GET_MC   = 8
+const GET_PID = 7
+const GET_MC = 8
 
 // Error codes
-const OK        = 0
-const NO_KEY    = 1
-const NO_SPACE  = 2
+const OK = 0
+const NO_KEY = 1
+const NO_SPACE = 2
 const SYS_OVRLD = 3
 const UNKWN_CMD = 5
-const INV_KEY   = 6
-const INV_VAL   = 7
+const INV_KEY = 6
+const INV_VAL = 7
 
-const LESS    = -1
-const EQUAL   =  0
-const GREATER =  1
-
+const LESS = -1
+const EQUAL = 0
+const GREATER = 1
 
 //MAP_AND_CACHE----------------------------
 
@@ -95,7 +97,6 @@ type StorageModule struct {
 // 		//"127.0.0.1:3205",
 // 	}
 // }
-
 
 func hashDifference(key *big.Int, node *big.Int) *big.Int {
 	diff := big.NewInt(0)
@@ -157,12 +158,12 @@ func keyRoute(key []byte, gms *membership.MembershipService) string {
 }
 
 func New(
-	tm *transport.TransportModule, 
-	reqFrom_tm chan protobuf.InternalMsg, 
-	gms *membership.MembershipService) (*StorageModule) {
+	tm *transport.TransportModule,
+	reqFrom_tm chan protobuf.InternalMsg,
+	gms *membership.MembershipService) *StorageModule {
 
 	sm := StorageModule{
-		kvStore: make(map[string][]byte), 
+		kvStore: make(map[string][]byte),
 		kvsLock: &sync.Mutex{},
 	}
 
@@ -171,18 +172,50 @@ func New(
 	return &sm
 }
 
+func gzipString(src []byte) ([]byte, error) {
+	var buf bytes.Buffer
+	zw := gzip.NewWriter(&buf)
+
+	_, err := zw.Write(src)
+	if err != nil {
+		return nil, err
+	}
+
+	if err := zw.Close(); err != nil {
+		return nil, err
+	}
+
+	return buf.Bytes(), nil
+}
+
+func unzipgzipString(src []byte) ([]byte, error) {
+	var buf bytes.Buffer
+	zw := gzip.NewWriter(&buf)
+
+	gr, err := gzip.NewReader(bytes.NewBuffer(src))
+	if err != nil {
+		return nil, err
+	}
+	src, err = ioutil.ReadAll(gr)
+	if err := zw.Close(); err != nil {
+		return nil, err
+	}
+
+	return src, err
+}
 
 func (sm *StorageModule) runModule(tm *transport.TransportModule, reqFrom_tm chan protobuf.InternalMsg, gms *membership.MembershipService) {
-	for{
+	for {
 		req := <-reqFrom_tm
 		if req.OriginAddr == "" {
 			unmarshalled_payload := &protobuf.KVRequest{}
 			proto.Unmarshal(req.Payload, unmarshalled_payload)
 			destAddr := keyRoute(unmarshalled_payload.Key, gms)
+
 			//argsWithProg := os.Args
 			if destAddr == transport.GetLocalAddr() { // is it should be handles
-				response, _ := sm.message_handler(req.Payload)
-				tm.ResSend(response,string(req.Message ), req.ClientAddr)
+				response := sm.message_handler(req.Payload)
+				tm.ResSend(response, string(req.Message), req.ClientAddr)
 			} else {
 				internalPayload_new := req
 				internalPayload_new.OriginAddr = transport.GetLocalAddr()
@@ -190,53 +223,66 @@ func (sm *StorageModule) runModule(tm *transport.TransportModule, reqFrom_tm cha
 				if err != nil {
 					log.Println("[ERTICAL CASTINF ERROR][234]")
 				} else {
-					tm.Send(marshalled_internalPayload,[]byte( "reques" + string(req.Message)), destAddr)
+					tm.Send(marshalled_internalPayload, []byte("reques"+string(req.Message)), destAddr)
 				}
 			}
 		} else {
-			response, _ := sm.message_handler(req.Payload)
-			tm.ResSend(response, string(req.Message), req.ClientAddr);
+			response := sm.message_handler(req.Payload)
+			tm.ResSend(response, string(req.Message), req.ClientAddr)
 		}
 	}
 }
-
 
 /**
  * @Description: peals the seconday message layer and performs server functions returns the genarated payload
  * @param message
  * @return []byte
  */
- func (sm *StorageModule) message_handler(message []byte) ([]byte, bool) {
+func (sm *StorageModule) message_handler(message []byte) []byte {
 	cast_req := &protobuf.KVRequest{}
 	error := proto.Unmarshal(message, cast_req)
 	if error != nil {
 		fmt.Printf("\nUNPACK ERROR %+v\n", error)
 	}
 
+	var errCode uint32
+	var value []byte
+	var pid int32
+
 	switch cast_req.GetCommand() {
 	case PUT:
-		return sm.put(cast_req.GetKey(), cast_req.GetValue(), cast_req.GetVersion()), false
+		errCode = sm.put(cast_req.GetKey(), cast_req.GetValue(), cast_req.GetVersion())
 	case GET:
-		return sm.get(cast_req.Key), false
+		value, errCode = sm.get(cast_req.Key)
 	case REMOVE:
-		return sm.remove(cast_req.Key), true
+		errCode = sm.remove(cast_req.Key)
 	case SHUTDOWN:
 		shutdown()
 	case WIPEOUT:
-		return sm.wipeout(), true
+		errCode = sm.wipeout()
 	case IS_ALIVE:
-		return is_alive(), true
+		errCode = is_alive()
 	case GET_PID:
-		return getpid(), true
+		pid, errCode = getpid()
 	case GET_MC:
-		return getmemcount(), true
+		_ = getmemcount()
 	default:
-		return message, true
+		errCode = UNKWN_CMD
 	}
 
-	return is_alive(), true
-}
+	kvres := &protobuf.KVResponse{
+		ErrCode: &errCode,
+		Value:   value,
+		Pid:     &pid,
+	}
 
+	serialResponse, err := proto.Marshal(kvres)
+	if err != nil {
+		log.Println("Marshalling error ", err)
+	}
+
+	return serialResponse
+}
 
 //-----------------------------------------
 //DATABASE FUNCTIONS-----------------------
@@ -249,46 +295,24 @@ func (sm *StorageModule) runModule(tm *transport.TransportModule, reqFrom_tm cha
  * @param version
  * @return []byte
  */
-func (sm *StorageModule) put(key []byte, value []byte, version int32) []byte {
-	var errCode uint32 = OK
+func (sm *StorageModule) put(key []byte, value []byte, version int32) uint32 {
 	if int(len(value)) > 10000 {
-		errCode = INV_VAL
-
-		payload := &protobuf.KVResponse{ErrCode: &errCode}
-		out, err := proto.Marshal(payload)
-		if err != nil {
-			log.Fatalln("Failed to encode address book:", err)
-		}
-
-		return out
+		return INV_VAL
 	}
-	sm.kvsLock.Lock() //<<<<<<<<<<<<<<<MAP LOCK
 
 	if getCurrMem() < uint64(MAP_SIZE_MB) {
-
-	//log.Println("PUT ", hex.EncodeToString(value), " at ", hex.EncodeToString(key))
-		sm.kvStore[string(key)] = value // adding the value
-		if debug {
-			fmt.Println("PUT", string(key), ",<->", string(value))
-		}
+		// zipValue,err:=gzipString(value)
+		// if(err!=nil){
+		// 	fmt.Println(err)
+		// }
+		sm.kvsLock.Lock()
+		sm.kvStore[string(key)] = value
+		sm.kvsLock.Unlock()
 	} else {
-		if debug {
-			fmt.Println("ERROR PUTTING")
-		}
-		errCode = NO_SPACE
-	}
-	sm.kvsLock.Unlock() //<<<<<<<<<<<<<<<MAP UNLOCK
-
-	payload := &protobuf.KVResponse{
-		ErrCode: &errCode,
-		Value:   value,
-	}
-	out, err := proto.Marshal(payload)
-	if err != nil {
-		log.Fatalln("Failed to encode address book:", err)
+		return NO_SPACE
 	}
 
-	return out
+	return OK
 }
 
 /**
@@ -296,26 +320,20 @@ func (sm *StorageModule) put(key []byte, value []byte, version int32) []byte {
  * @param key
  * @return []byte
  */
-func (sm *StorageModule) get(key []byte) []byte {
+func (sm *StorageModule) get(key []byte) ([]byte, uint32) {
 	sm.kvsLock.Lock()
 	value, found := sm.kvStore[string(key)]
-	//log.Println("GET ", hex.EncodeToString(value), " from ", hex.EncodeToString(key))
 	sm.kvsLock.Unlock()
-	var errCode uint32 = OK
+
 	if !found {
-		errCode = NO_KEY
+		return nil, NO_KEY
 	}
-
-	payload := &protobuf.KVResponse{
-		ErrCode: &errCode,
-		Value:   value,
-	}
-	out, err := proto.Marshal(payload)
-	if err != nil {
-		log.Fatalln("Failed to encode address book:", err)
-	}
-
-	return out
+	// unziped,err:=unzipgzipString(value)
+	// if err!= nil {
+	// 	fmt.Println(err)
+	// }
+	// return unziped, OK
+	return value, OK
 }
 
 /**
@@ -323,43 +341,23 @@ func (sm *StorageModule) get(key []byte) []byte {
  * @param key
  * @return []byte
  */
-func (sm *StorageModule) remove(key []byte) []byte {
-	var errCode uint32 = OK
+func (sm *StorageModule) remove(key []byte) uint32 {
 
 	sm.kvsLock.Lock()
-	value, found := sm.kvStore[string(key)]
+	_, found := sm.kvStore[string(key)]
+	sm.kvsLock.Unlock()
 
 	if found {
+		sm.kvsLock.Lock()
 		delete(sm.kvStore, string(key))
 		sm.kvsLock.Unlock()
 
-		payload := &protobuf.KVResponse{
-			ErrCode: &errCode,
-			Value:   value,
-		}
+		return OK
 
-		out, err := proto.Marshal(payload)
-		if err != nil {
-			log.Fatalln("Failed to encode address book:", err)
-		}
-
-		return out
-
-	} else {
-		sm.kvsLock.Unlock()
-		errCode = NO_KEY
-
-		payload := &protobuf.KVResponse{
-			ErrCode: &errCode,
-			Value:   value,
-		}
-		out, err := proto.Marshal(payload)
-		if err != nil {
-			log.Fatalln("Failed to encode address book:", err)
-		}
-
-		return out
 	}
+
+	return NO_KEY
+
 }
 
 /**
@@ -373,81 +371,45 @@ func shutdown() {
  * @Description: clears the database
  * @return []byte
  */
-func (sm *StorageModule) wipeout() []byte {
+func (sm *StorageModule) wipeout() uint32 {
 	sm.kvsLock.Lock() //<<<<<<<<<<<<<<<MAP LOCK
 	sm.kvStore = make(map[string][]byte)
 	sm.kvsLock.Unlock() //<<<<<<<<<<<<<<<MAP UNLOCK
-	var errCode uint32 = OK
 
-	payload := &protobuf.KVResponse{ErrCode: &errCode}
-	out, err := proto.Marshal(payload)
-	if err != nil {
-		log.Fatalln("Failed to encode address book:", err)
-	}
-
-	return out
+	return OK
 }
 
 /**
  * @Description: response indicating server is alive
  * @return []byte
  */
-func is_alive() []byte {
+func is_alive() uint32 {
 	fmt.Println("CLIENT ASKED IF SERVER ALIVE")
 
-	var errCode uint32 = OK
-
-	payload := &protobuf.KVResponse{ErrCode: &errCode}
-	out, err := proto.Marshal(payload)
-	if err != nil {
-		log.Fatalln("Failed to encode address book:", err)
-	}
-
-	return out
+	return OK
 }
 
 /**
  * @Description: gets the current procressID
  * @return []byte
  */
-func getpid() []byte {
-	var errCode uint32 = OK
-
+func getpid() (int32, uint32) {
 	pid := int32(syscall.Getpid())
-	payload := &protobuf.KVResponse{
-		ErrCode: &errCode,
-		Pid:     &pid,
-	}
 
-	out, err := proto.Marshal(payload)
-	if err != nil {
-		log.Fatalln("Failed to encode address book:", err)
-	}
-
-	return out
+	return pid, OK
 }
 
 /**
  * @Description: returns number of members
  * @return []byte
  */
-func getmemcount() []byte {
-	var errCode uint32 = OK
-
-	payload := &protobuf.KVResponse{ErrCode: &errCode}
-
-	out, err := proto.Marshal(payload)
-	if err != nil {
-		log.Fatalln("Failed to encode address book:", err)
-	}
-
-	return out
+func getmemcount() int32 {
+	return 1 //TODO RETURNING 1 for now
 }
 
 func bToMb(b uint64) uint64 {
 	return b / 1024 / 1024
 }
-
 
 func getCurrMem() uint64 {
 	var m runtime.MemStats

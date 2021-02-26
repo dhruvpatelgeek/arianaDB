@@ -21,6 +21,12 @@ import (
 //https://stackoverflow.com/questions/31879817/golang-os-exec-realtime-memory-usage
 //https://golangcode.com/print-the-current-memory-usage/
 
+// memory debugger
+var numStorageMessages = 0
+var numGMSMessages = 0
+var numRerouteMessages = 0
+var numGossipMessages = 0
+
 //-----------------------------------------
 //CONTROL PANEL----------------------------
 var debug = false
@@ -32,12 +38,6 @@ var CACHE_LIFESPAN = 5 // how long should the cache persist
 
 var LOCAL_PORT string
 
-//-----------------------------------------
-
-//LOCAL ADDRESS----------------------------
-var localAddr string="127.0.0.1:3200" // placeholder
-//-----------------------------------------
-
 //CONNECTION-------------------------------
 
 type Message struct {
@@ -47,30 +47,30 @@ type Message struct {
 }
 
 type TransportModule struct {
-	connection *net.UDPConn
-	GroupSend chan []byte
+	connection  *net.UDPConn
+	GroupSend   chan []byte
 	StorageChan chan protobuf.InternalMsg
 }
 
-func New(port int, gmsChan chan []byte,StorageChan chan protobuf.InternalMsg) (*TransportModule, error) {
-	
+func New(ip string, port int, gmsChan chan []byte, StorageChan chan protobuf.InternalMsg) (*TransportModule, error) {
+
 	LOCAL_PORT = strconv.Itoa(port)
 
 	tm := &TransportModule{}
 	if !validPort(port) {
-		return tm, nil 
+		return tm, nil
 	}
 
-	conn := listen(port)
+	conn := listen(ip, port)
 
-	tm.StorageChan=StorageChan
+	tm.StorageChan = StorageChan
 	tm.connection = conn
 	tm.GroupSend = gmsChan
-/*
+
 	go proportionalCollector()
 
-	go tm.daemonSpawner()
-*/
+	//go tm.daemonSpawner()
+
 	return tm, nil
 
 }
@@ -78,7 +78,7 @@ func New(port int, gmsChan chan []byte,StorageChan chan protobuf.InternalMsg) (*
 func (tm *TransportModule) Send(payload []byte, messageID []byte, destAddr string) {
 	message, err := generateShell(payload, messageID)
 	if err != nil {
-		fmt.Println("payload gen failed");
+		fmt.Println("payload gen failed")
 	}
 
 	msg := &protobuf.Msg{}
@@ -96,6 +96,7 @@ func (tm *TransportModule) Send(payload []byte, messageID []byte, destAddr strin
 
 	tm.connection.WriteToUDP(message, addr)
 }
+
 /*
 var connection *net.UDPConn
 
@@ -103,11 +104,10 @@ var GroupSend = make(chan Message)
 */
 //------------------------------------------
 
-
 //optimizations----------------------------
 
 func proportionalCollector() {
-	var sleepCtr time.Duration = 1000*time.Millisecond
+	var sleepCtr time.Duration = 1000 * time.Millisecond
 	for {
 		//log.Println("GC")
 		time.Sleep(sleepCtr)
@@ -121,20 +121,20 @@ func sleepCurve() time.Duration {
 	runtime.ReadMemStats(&m)
 	currentMem := bToMb((m.Alloc))
 	//fmt.Println(currentMem)
-	if currentMem < 70 {
-		return 5*time.Second
+	if currentMem < 20 {
+		return 5 * time.Second
+	} else if currentMem < 30 {
+		return 100 * time.Millisecond
+	} else if currentMem < 40 {
+		return 50 * time.Millisecond
+	} else if currentMem < 50 {
+		return 10 * time.Millisecond
 	} else if currentMem < 80 {
-		return 100*time.Millisecond
-	} else if currentMem < 90 {
-		return 50*time.Millisecond
-	} else if currentMem < 100 {
-		return 10*time.Millisecond
-	} else if currentMem < 110 {
 		//fmt.Println("CRITICAL MEMORY")
 		return time.Millisecond
 	} else {
 		//fmt.Println("[SUPER] CRITICAL MEMORY")
-		return 100*time.Microsecond
+		return 100 * time.Microsecond
 	}
 }
 
@@ -152,17 +152,17 @@ var message_cache = cache.New(5*time.Second, 1*time.Nanosecond)
  * @return []byte
  * @return bool
  */
- func check_cache(message_id []byte)([]byte,bool){
+func check_cache(message_id []byte) ([]byte, bool) {
 	if debug {
 		fmt.Println("checking cache...")
 	}
 	response, found := message_cache.Get(string(message_id))
 
-	if ! found {
+	if !found {
 		if debug {
 			fmt.Println("not found...")
 		}
-		return nil, false;
+		return nil, false
 	} else {
 		if debug {
 			fmt.Println("found...")
@@ -180,19 +180,19 @@ var message_cache = cache.New(5*time.Second, 1*time.Nanosecond)
  * @param data
  * @return bool
  */
-func cache_data(message_id []byte,data []byte)(bool){
+func cache_data(message_id []byte, data []byte) bool {
 	if get_mem_usage() > uint64(MEMORY_LIMIT-20) {
-		return true;
+		return true
 		fmt.Println("\n[MEMORY WARNING]\n")
-		message_cache.Flush();
+		message_cache.Flush()
 	}
 	if get_mem_usage() > uint64(MEMORY_LIMIT/2) {
 		fmt.Println("\n[MEMORY WARNING 50%]\n")
-		message_cache.DeleteExpired();
+		message_cache.DeleteExpired()
 	}
 
-	message_cache.Set(string(message_id), string(data), cache.DefaultExpiration);
-	return true;
+	message_cache.Set(string(message_id), string(data), cache.DefaultExpiration)
+	return true
 }
 
 //-----------------------------------------
@@ -232,74 +232,32 @@ func (tm *TransportModule) UDP_daemon(connection *net.UDPConn, conduit chan int,
 	if debug {
 		fmt.Println("THREAD SPAWNED->", thread_num)
 	}
-
-	buffer := make([]byte, 20100)
-	n, remoteAddr, err := tm.connection.ReadFromUDP(buffer)
-	for err != nil {
-		fmt.Println("listener failed - ", err)
-		conduit <- 2
-	}
-
-	conduit <- 1
-	go tm.router(buffer[:n], remoteAddr.String())
-}
-
-/**
- * @Description: genrates several go routine depending on the memory
- * @param _port
- * @return func()
- */
-func (tm *TransportModule) daemonSpawner() {
-	
-	var thread_num int = 0
-	conduit := make(chan int)
-	if MULTI_CORE_MODE {
-		for i := 0; i < 1; i++ {
-			go tm.UDP_daemon(tm.connection, conduit, thread_num)
-			thread_num++
-		}
-	} else {
-		go tm.UDP_daemon(tm.connection, conduit, thread_num)
-		thread_num++
-	}
-	if !debug {
-		fmt.Print("\033[s")
-	}
+	// count := 0
 
 	for {
-		if get_mem_usage() < uint64(MEMORY_LIMIT) {
-			switch <-conduit {
-			case 1:
-				go tm.UDP_daemon(tm.connection, conduit, thread_num)
-				if thread_num % 500 == 0 {
-					log.Println(" Exited thread ", thread_num)
-				}
-				thread_num++
-			case 2:
-				if debug {
-					fmt.Println("THREAD NUMBER ", thread_num, "EXITED ON ERROR")
-				}
-				thread_num++
-			}
-
-		} else {
-			fmt.Printf("\n[HALT] MEMORY FULL calling garbage collector-> %+v\n", get_mem_usage())
-			time.Sleep(1 * time.Second)
-			message_cache.Flush()
-			message_cache.DeleteExpired()
-			runtime.GC()
+		buffer := make([]byte, 20100)
+		n, remoteAddr, err := tm.connection.ReadFromUDP(buffer)
+		for err != nil {
+			fmt.Println("listener failed - ", err)
 		}
+		// if count%500 == 0 {
+		// 	fmt.Println(count)
+		// }
+		// count++
+
+		tm.router(buffer[:n], remoteAddr.String())
 	}
+
 }
 
-func listen(port int) *net.UDPConn {
+func listen(selfIP string, port int) *net.UDPConn {
 	var err error
 
-	address := net.UDPAddr{
-		Port: port,
-		IP:   net.IP{0, 0, 0, 0}, // local ip address
+	address, err := net.ResolveUDPAddr("udp", selfIP+":"+strconv.Itoa(port))
+	if err != nil {
+		fmt.Errorf("Unable to resolve udp address (ip: %s, port: %d", selfIP, port)
 	}
-	connection, err := net.ListenUDP("udp", &address)
+	connection, err := net.ListenUDP("udp", address)
 	if err != nil {
 		fmt.Printf("[UDP [fwef]]%+v", err)
 	}
@@ -322,14 +280,15 @@ func listen(port int) *net.UDPConn {
  * @Description: inialises the server based on port number
  * @param args
  */
- 
+
 func (tm *TransportModule) Init_server() {
 	if MULTI_CORE_MODE {
 		fmt.Println("[MULTICORE MODE] [", runtime.NumCPU(), "] SPANNERS AT PORT [", tm.connection.LocalAddr(), "] SYS MEM LIMIT [", MEMORY_LIMIT, "]")
 	}
 
 	//go proportionalCollector()
-	tm.daemonSpawner()
+	// tm.daemonSpawner()
+	go tm.UDP_daemon(tm.connection, nil, 0)
 
 }
 
@@ -395,8 +354,7 @@ func bToMb(b uint64) uint64 {
 	return b / 1024 / 1024
 }
 
-
-func generateShell(payload []byte, messageId []byte) ([]byte, error){
+func generateShell(payload []byte, messageId []byte) ([]byte, error) {
 	checksum := calculate_checksum([]byte(messageId), payload)
 	shell := &protobuf.Msg{
 		MessageID: messageId,
@@ -412,7 +370,7 @@ func generateShell(payload []byte, messageId []byte) ([]byte, error){
 	return marshelledShell, err
 }
 
-func (tm *TransportModule) router(serialMsg []byte, clientAddr string){
+func (tm *TransportModule) router(serialMsg []byte, clientAddr string) {
 
 	msg := &protobuf.Msg{}
 	proto.Unmarshal(serialMsg, msg)
@@ -426,15 +384,13 @@ func (tm *TransportModule) router(serialMsg []byte, clientAddr string){
 			tm.gossipPrepend(payload, clientAddr)
 		case "reques": // node req prepend
 			tm.nodeReq(payload, messageID[6:])
-			//log.Println("reques")
 		default: // no pre pend
-			//log.Println("default-> no prepend")
 			tm.clientReq(payload, messageID, clientAddr)
 		}
 	} else {
-			//log.Println("default-> no prepend")
-			tm.clientReq(payload, messageID, clientAddr)
-		}
+		//if numStorageMessages%500 == 0 {
+		tm.clientReq(payload, messageID, clientAddr)
+	}
 }
 
 // no pre pend
@@ -444,24 +400,24 @@ func (tm *TransportModule) clientReq(payload []byte, messageID []byte, clientAdd
 		tm.Send(cachedResponse, messageID, clientAddr)
 	} else {
 
-		internal_message_obj:=protobuf.InternalMsg{
+		internal_message_obj := protobuf.InternalMsg{
 			ClientAddr: clientAddr,
 			OriginAddr: "",
 			Payload:    payload,
 			Message:    messageID,
 		}
 
-		tm.StorageChan<-internal_message_obj
+		tm.StorageChan <- internal_message_obj
 
 	}
 }
 
 func (tm *TransportModule) gossipPrepend(payload []byte, clientAddr string) {
-	tm.GroupSend <- payload;
+	tm.GroupSend <- payload
 }
 
 // node req prepend
-func (tm *TransportModule) nodeReq(node2nodePayload []byte, messageID []byte){
+func (tm *TransportModule) nodeReq(node2nodePayload []byte, messageID []byte) {
 	node2nodeMsg := &protobuf.InternalMsg{}
 	proto.Unmarshal(node2nodePayload, node2nodeMsg)
 	clientAddr := node2nodeMsg.GetClientAddr()
@@ -469,11 +425,11 @@ func (tm *TransportModule) nodeReq(node2nodePayload []byte, messageID []byte){
 	if found {
 		tm.Send(cachedResponse, messageID, clientAddr)
 	} else {
-		tm.StorageChan<-*node2nodeMsg
+		tm.StorageChan <- *node2nodeMsg
 	}
 }
 
-func (tm * TransportModule) nodeRes(node2nodePayload []byte, messageID []byte){
+func (tm *TransportModule) nodeRes(node2nodePayload []byte, messageID []byte) {
 	// send the internalPayload to the client
 	node2nodeMsg := &protobuf.InternalMsg{}
 	proto.Unmarshal(node2nodePayload, node2nodeMsg)
@@ -489,27 +445,22 @@ func (tm * TransportModule) nodeRes(node2nodePayload []byte, messageID []byte){
 //https://stackoverflow.com/questions/23558425/how-do-i-get-the-local-ip-address-in-go
 //retunr the local address of the machine
 func GetLocalAddr() string {
-	conn, err := net.Dial("udp", "8.8.8.8:80")
+
+	arguments := os.Args
+	portInt, err := strconv.Atoi(arguments[1])
 	if err != nil {
-		log.Fatal(err)
+		fmt.Println(err)
 	}
-	defer conn.Close()
+	y := 2 + portInt - 4001
+	address := "172.17.0." + strconv.Itoa(y) + ":" + arguments[1]
+	// fmt.Println(address)
+	// address = "127.0.0.1:"+arguments[1]
 
-	localAddr := conn.LocalAddr().(*net.UDPAddr)
-	argsWithProg := os.Args
-	port_num:=argsWithProg[1]
-
-	return localAddr.IP.String()+":"+port_num
+	return address
 }
 
-func init(){
-	localAddr= GetLocalAddr()
-	fmt.Println("SERVER INITIALIZED AT",localAddr);
-}
-
-
-func (tm *TransportModule) ResSend(payload []byte,messageID string,destAddr string){
-	cache_data([]byte(messageID),payload)
-	tm.Send(payload,[]byte(messageID),destAddr)
+func (tm *TransportModule) ResSend(payload []byte, messageID string, destAddr string) {
+	cache_data([]byte(messageID), payload)
+	tm.Send(payload, []byte(messageID), destAddr)
 
 }

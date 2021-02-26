@@ -14,17 +14,22 @@ import (
 	"github.com/google/uuid"
 )
 
+const FANOUT = 4
+
 // SendJoinCommand is a command sent by new joins node
 const SendJoinCommand uint32 = 12
+
 // HeartbeatGossipCommand is a command for heartbeat protocol
 const HeartbeatGossipCommand uint32 = 13
 
 // TimeHeartbeat is time period for Heartbeat
 const TimeHeartbeat = 100
+
 // TimeFail is time period for failCheck Check
-const TimeFail = 4000
+const TimeFail = 5 * 1000
+
 // TimeCleanup is time period for Clean up failChecked node
-const TimeCleanup = 10000
+const TimeCleanup = 20 * 1000
 
 // TODO: consider moving the members list to its own file under the same package for cleanliness & atomic operations.
 type membersListValue struct {
@@ -39,8 +44,6 @@ type MembershipService struct {
 	transport       *transport.TransportModule
 	receiveChannel  chan []byte
 }
-
-
 
 // New Creates a new instance of the GroupMembershipService which manages the set of members in the service.
 // On start up, the node will spawn a thread for listening to the receiveChannel. All group membership service operations
@@ -69,13 +72,10 @@ func New(
 		return nil, errors.New("invalid self-ip address to create new membership service")
 	}
 	gms.address = myAddress + ":" + myPort
-
 	// add itself to the membership
 	gms.membersListLock.Lock()
-	fmt.Println("[DEBUG] [GMS] Itself acquired lock: ", gms.members)
 	gms.members[gms.address] = createNewMembersListValue() // add itself to the membership
 	gms.members[gms.address].isAlive = true
-	fmt.Println("[DEBUG] [GMS] Itself acquired lock: ", gms.members)
 	gms.membersListLock.Unlock()
 
 	// begin a thread for listening to the receive channel and processing messages
@@ -96,19 +96,19 @@ func (gms *MembershipService) failCheck() {
 	for {
 		// sleep for a certain amount of time
 		time.Sleep(TimeFail * time.Millisecond)
-
+		checkTime := getCurrentTimeInMilliSec()
 		// iterate through membership lists and check if failChecked:
 		gms.membersListLock.Lock()
 		for addr := range gms.members {
-			if addr != gms.address && gms.members[addr].heartbeatTimestamp < getCurrentTimeInMilliSec()-TimeFail {
-				gms.members[addr].isAlive = false 
-				fmt.Sprintln("Node %s failChecked, but won't clean up yet")
+			if addr != gms.address && gms.members[addr].heartbeatTimestamp < checkTime-TimeFail {
+				gms.members[addr].isAlive = false
+				// fmt.Println("Node failChecked, but won't clean up yet")
+				// fmt.Sprintln("Node %s failChecked, but won't clean up yet")
 			}
 		}
 		gms.membersListLock.Unlock()
 	}
 }
-
 
 func (gms *MembershipService) cleanupCheck() {
 
@@ -137,18 +137,40 @@ func (gms *MembershipService) heartbeat() {
 		// sleep for a cretain amount of time.
 		time.Sleep(TimeHeartbeat * time.Millisecond)
 		if len(gms.members) > 1 {
-			// send hearbeat:
-			// randomly choose one node to send message:
-			gms.membersListLock.Lock()
-			address := gms.chooseRandomKey()
-			gms.membersListLock.Unlock()
-			fmt.Sprintln("sending a heartbeat message to: %s", address)
-
-			gms.sendList(address)
+			addresses := gms.getGossipGroup()
+			for addr := range addresses {
+				gms.sendList(addresses[addr])
+			}
 		}
 	}
 }
 
+// getGossipGroup() returns a random subset of other nodes to gossip to of size min(FANOUT, numOtherMembers)
+// - "other nodes" refers to all nodes in the membership excluding itself
+// - assumes FANOUT is not negative
+func (gms *MembershipService) getGossipGroup() []string {
+	// create a list of other members excluding itself.
+	var otherMembers []string
+	for member, _ := range gms.members {
+		if member != gms.address {
+			otherMembers = append(otherMembers, member)
+		}
+	}
+
+	var numOtherMembers = len(otherMembers)
+
+	// randomize
+	rand.Shuffle(numOtherMembers, func(i, j int) {
+		otherMembers[i], otherMembers[j] = otherMembers[j], otherMembers[i]
+	})
+
+	// return a subset of size min(FANOUT, numOtherMembers)
+	var subsetSize int
+	if subsetSize = numOtherMembers; FANOUT < numOtherMembers {
+		subsetSize = FANOUT
+	}
+	return otherMembers[:subsetSize]
+}
 
 func (gms *MembershipService) chooseRandomKey() string {
 	i := int(float32(len(gms.members)-1) * rand.Float32())
@@ -189,6 +211,9 @@ func (gms *MembershipService) processHeartbeat(request *protobuf.MembershipReq) 
 			gms.members[address] = createNewMembersListValue()
 		}
 	}
+	// if len(gms.members) == 15 {
+	// 	fmt.Println("All nodes know each other!")
+	// }
 
 	gms.members[destination].heartbeatTimestamp = getCurrentTimeInMilliSec()
 	gms.members[destination].isAlive = true
@@ -253,7 +278,6 @@ func (gms *MembershipService) processMessage(msgReceived []byte) {
 	}
 }
 
-
 func (gms *MembershipService) processSendJoinRequest(request *protobuf.MembershipReq) error {
 	requestor := request.GetJoinDestinationAddress()
 	if requestor != gms.address {
@@ -296,7 +320,6 @@ func (gms *MembershipService) sendList(destination string) {
 	gms.transport.Send(payload, generateMessageID(), destination)
 }
 
-
 func (gms *MembershipService) GetAllNodes() []string {
 	var allNodes []string
 
@@ -317,7 +340,6 @@ func generateMessageID() []byte {
 
 	return []byte("gossip" + id)
 }
-
 
 func (gms *MembershipService) marshalMembershipRequest(command uint32, list []string) (bool, []byte) {
 	MReq := &protobuf.MembershipReq{
