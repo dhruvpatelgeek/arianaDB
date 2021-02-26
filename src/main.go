@@ -13,17 +13,14 @@ import (
 	"os"
 	"strconv"
 	"strings"
-	"time"
 )
-
-const MAX_RECEIVE_CHANNEL = 2
 
 func main() {
 	// parse input arguments
 	arguments := os.Args[1:]
 	port, initialMembers, err := validateArgs(arguments)
 	if err != nil {
-		log.Fatal("Error occurred while validating arguments")
+		log.Fatal("Error occurred while validating arguments.", err)
 		panic(err)
 	}
 
@@ -35,37 +32,50 @@ func main() {
 	containerHostname := getOutboundIP().String()
 
 	// initialize transport layer
-	portInt, err := strconv.Atoi(port)
+	portInt, _ := strconv.Atoi(port)
 	transport, err := transport.New(containerHostname, portInt, gmsChannel, storageChannel)
+	if err != nil {
+		log.Fatal("Failed to initialize transport layer.", err)
+		panic("Error when creating transport layer. Abort creating server.")
+	}
 	go transport.Init_server()
 
 	// initialize group membership service
 	gms, err := membership.New(initialMembers, transport, gmsChannel, containerHostname, port)
 	if err != nil {
-		log.Fatal(err)
-		panic("error when creating gms")
+		log.Fatal("Failed to initialize GMS.", err)
+		panic("Error when creating gms. Abort creating server.")
 	}
 
 	// initialize storage service
 	storage.New(transport, storageChannel, gms)
-
-	for {
-		time.Sleep(60 * time.Second)
-		fmt.Println(gms.GetAllNodes())
-	}
 
 	// block main thread from ending and closing application
 	doneChan := make(chan error, 1)
 	_ = <-doneChan
 }
 
+/** validateArgs() extracts the "port" and "initial peers list" from the constructor args.
+- returns error if:
+	- incorrect number of arguments. Expects 2 arguments to be passed: $port $peersfile
+	- $port is not an integer
+	- $port is out-of-bounds (valid if port is in [0,65535])
+	- unable to open file at $peersfile
+	- faied to read $peersfile.
+
+- "initial peers list" ignores invalid entries where an entry is invalid if:
+	- a line is not of the form "ip:port"
+	- "ip" is not a valid IPv4 address
+	- "port" is out-of-bounds.
+*/
 func validateArgs(args []string) (port string, initialMembers []string, err error) {
-	// if len(args) != 2 {
-	// 	return "", nil, errors.New("Must provide exactly 2 arguments")
-	// }
+	if len(args) != 2 {
+		return "", nil, errors.New("Must provide exactly 2 arguments")
+	}
 
 	port = args[0]
 
+	// validate port argument
 	parsedPort, err := strconv.Atoi(port)
 	if err != nil {
 		return "", nil, errors.New("Failed to parse port")
@@ -81,7 +91,7 @@ func validateArgs(args []string) (port string, initialMembers []string, err erro
 	}
 	defer file.Close()
 
-	// validate peers file and build initialMembers list if peer is valid
+	// validate peers file and append to initialMembers list if peer is valid
 	scanner := bufio.NewScanner(file)
 	for scanner.Scan() {
 		text := scanner.Text()
