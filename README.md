@@ -1,8 +1,5 @@
 # Spirit of Fire: Distributed Hash Table
-<<<<<<< HEAD
-=======
 Team members: Dhruv Patel, Caleb Sattler, Danny Lee, Patrick Huang
->>>>>>> a28c9de749d0b3547b20d96dc8bb0d3387d9d912
 ### Contributions
 
 #### Group Membership Team
@@ -13,15 +10,10 @@ Team members: Dhruv Patel, Caleb Sattler, Danny Lee, Patrick Huang
 - ````CLewisS (Caleb Sattler)````		-> Storage,Transport and Optimizations 
 - ````dhruvpatelgeek(Dhruv Patel)````	-> Storage,Transport and Optimizations 
 
-<<<<<<< HEAD
-Note : We did a lot of pair programming so even if it might look like some members have not commited as much code 
-we strongly think everyone contributed equally to this project 
-=======
 Note : We have 2 more repos previously, and most of the git commit history can be
 found in those repos(https://github.com/Datsgood/cpen431-sathish-dream-team && 
 https://github.com/CLewisS/new-beginnings). We did a lot of pair programming and
 we strongly think everyone contributed equally to this project.
->>>>>>> a28c9de749d0b3547b20d96dc8bb0d3387d9d912
 
 ### Instructions
 1. To build the project, run the command: `docker build -t dht .`
@@ -46,7 +38,7 @@ The group membership service maintains a list of all nodes in the system using a
 
 
 ### Transport Layer
-TODO:
+We used the same transport layer from PA2 but we refactored it to take less space (10X less) and we switched from modular to OOP paradigm 
 ### Storage Service
 The storage service module maintains a map based key-value store, and executes consistent hasing for key distribution amongst nodes using SHA256.
  
