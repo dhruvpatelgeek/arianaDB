@@ -1,14 +1,11 @@
 package storage
 
 import (
-	"bytes"
-	"compress/gzip"
 	"crypto/sha256"
 	"dht/google_protocol_buffer/pb/protobuf"
 	"dht/src/membership"
 	"encoding/hex"
 	"fmt"
-	"io/ioutil"
 	"log"
 	"math/big"
 	"os"
@@ -16,7 +13,6 @@ import (
 	"sync"
 	"syscall"
 
-	//"encoding/hex"
 	"dht/src/transport"
 
 	"github.com/golang/protobuf/proto"
@@ -30,7 +26,8 @@ import (
 
 //CONTROL PANEL----------------------------
 var debug = false
-var MAP_SIZE_MB = 128000000000000000 // memory HARD LIMIT
+const STORE_SIZE_MB = 100 // memory HARD LIMIT
+const MEM_LIM_MB = 120 // memory HARD LIMIT
 
 // Command numbers
 const PUT = 1
@@ -55,49 +52,17 @@ const LESS = -1
 const EQUAL = 0
 const GREATER = 1
 
-//MAP_AND_CACHE----------------------------
-
 type StorageModule struct {
 	kvStore map[string][]byte
 	kvsLock *sync.Mutex
 }
 
-//-----------------------------------------
-// var getAllNodes = gms.GetAllNodes()
-// func () []string {
-// 	return []string {
-// 		//transport.GetLocalAddr(),
-// 		// "127.0.0.1:3200",
-// 		// "127.0.0.1:3201",
-// 		// "127.0.0.1:3202",
-// 		// "127.0.0.1:3203",
-// 		// "127.0.0.1:3204",
-// 		// "127.0.0.1:3205",
-// 		"127.0.0.1:3206",
-// 		"127.0.0.1:3207",
-// 		"127.0.0.1:3208",
-// 		"127.0.0.1:3209",
-// 		"127.0.0.1:3210",
-// 		"127.0.0.1:3211",
-// 		// "127.0.0.1:3212",
-// 		// "127.0.0.1:3213",
-// 		// "127.0.0.1:3214",
-// 		// "127.0.0.1:3215",
-// 		// "127.0.0.1:3216",
-// 		// "127.0.0.1:3217",
-// 		// "127.0.0.1:3218",
-// 		// "127.0.0.1:3219",
-// 		// "127.0.0.1:3220",
-// 		// "127.0.0.1:3221",
-// 		// "127.0.0.1:3222",
-// 		// "127.0.0.1:3223",
-// 		//"127.0.0.1:3202",
-// 		//"127.0.0.1:3203",
-// 		//"127.0.0.1:3204",
-// 		//"127.0.0.1:3205",
-// 	}
-// }
 
+// @Description: Computes the numerical difference between
+// the key's hash and the node's hash
+// @param key 
+// @param node
+// @return *big.Int
 func hashDifference(key *big.Int, node *big.Int) *big.Int {
 	diff := big.NewInt(0)
 	max := big.NewInt(0)
@@ -120,27 +85,36 @@ func hashDifference(key *big.Int, node *big.Int) *big.Int {
 	}
 }
 
+// @Description: returns the key's hash value as a big int
+// @param key 
+// @return *big.Int - Hash digest
 func hashInt(key string) *big.Int {
 	keyHash := hash(key)
 	keyHashInt := big.NewInt(0)
 	return keyHashInt.SetBytes(keyHash)
 }
 
+// @Description: returns the input string's sha256 digest
+// @param str 
+// @return []byte - SHA256 digest
 func hash(str string) []byte {
 	digest := sha256.Sum256([]byte(str))
 	return digest[:]
 }
 
+
+// @Description: Determines which node is responsible for the given key
+// @param key
+// @param gms
+// @return string - Location of node responsible for the given key
 func keyRoute(key []byte, gms *membership.MembershipService) string {
 	if len(key) == 0 {
 		return transport.GetLocalAddr()
 	}
 
 	keyHashInt := hashInt(hex.EncodeToString(key))
-	//log.Println(hex.EncodeToString(key), " Key hash", keyHashInt.String())
 
 	nodeList := gms.GetAllNodes()
-	//logger.Println(nodeList)
 
 	responsibleNode := nodeList[0]
 	diff := hashDifference(keyHashInt, hashInt(responsibleNode))
@@ -157,6 +131,11 @@ func keyRoute(key []byte, gms *membership.MembershipService) string {
 	return responsibleNode
 }
 
+// @Description: Initializes a new storage module
+// @param tm - transport module that sends requests to the storage module
+// @param reqFrom_tm - channel that transport module send requests on
+// @param gms - group membership service that gives the nodes in the network
+// @return *StorageModule
 func New(
 	tm *transport.TransportModule,
 	reqFrom_tm chan protobuf.InternalMsg,
@@ -172,38 +151,10 @@ func New(
 	return &sm
 }
 
-func gzipString(src []byte) ([]byte, error) {
-	var buf bytes.Buffer
-	zw := gzip.NewWriter(&buf)
-
-	_, err := zw.Write(src)
-	if err != nil {
-		return nil, err
-	}
-
-	if err := zw.Close(); err != nil {
-		return nil, err
-	}
-
-	return buf.Bytes(), nil
-}
-
-func unzipgzipString(src []byte) ([]byte, error) {
-	var buf bytes.Buffer
-	zw := gzip.NewWriter(&buf)
-
-	gr, err := gzip.NewReader(bytes.NewBuffer(src))
-	if err != nil {
-		return nil, err
-	}
-	src, err = ioutil.ReadAll(gr)
-	if err := zw.Close(); err != nil {
-		return nil, err
-	}
-
-	return src, err
-}
-
+// @Description: Starts the storage module loop
+// @param tm - transport module that sends requests to the storage module
+// @param reqFrom_tm - channel that transport module send requests on
+// @param gms - group membership service that gives the nodes in the network
 func (sm *StorageModule) runModule(tm *transport.TransportModule, reqFrom_tm chan protobuf.InternalMsg, gms *membership.MembershipService) {
 	for {
 		req := <-reqFrom_tm
@@ -212,9 +163,8 @@ func (sm *StorageModule) runModule(tm *transport.TransportModule, reqFrom_tm cha
 			proto.Unmarshal(req.Payload, unmarshalled_payload)
 			destAddr := keyRoute(unmarshalled_payload.Key, gms)
 
-			//argsWithProg := os.Args
-			if destAddr == transport.GetLocalAddr() { // is it should be handles
-				response := sm.message_handler(req.Payload)
+			if destAddr == transport.GetLocalAddr() {
+				response := sm.message_handler(req.Payload, gms)
 				tm.ResSend(response, string(req.Message), req.ClientAddr)
 			} else {
 				internalPayload_new := req
@@ -227,18 +177,16 @@ func (sm *StorageModule) runModule(tm *transport.TransportModule, reqFrom_tm cha
 				}
 			}
 		} else {
-			response := sm.message_handler(req.Payload)
+			response := sm.message_handler(req.Payload, gms)
 			tm.ResSend(response, string(req.Message), req.ClientAddr)
 		}
 	}
 }
 
-/**
- * @Description: peals the seconday message layer and performs server functions returns the genarated payload
- * @param message
- * @return []byte
- */
-func (sm *StorageModule) message_handler(message []byte) []byte {
+ // @Description: peals the seconday message layer and performs server functions returns the genarated payload
+ // @param message
+ // @return []byte
+func (sm *StorageModule) message_handler(message []byte, gms *membership.MembershipService) []byte {
 	cast_req := &protobuf.KVRequest{}
 	error := proto.Unmarshal(message, cast_req)
 	if error != nil {
@@ -249,25 +197,29 @@ func (sm *StorageModule) message_handler(message []byte) []byte {
 	var value []byte
 	var pid int32
 
-	switch cast_req.GetCommand() {
-	case PUT:
-		errCode = sm.put(cast_req.GetKey(), cast_req.GetValue(), cast_req.GetVersion())
-	case GET:
-		value, errCode = sm.get(cast_req.Key)
-	case REMOVE:
-		errCode = sm.remove(cast_req.Key)
-	case SHUTDOWN:
-		shutdown()
-	case WIPEOUT:
-		errCode = sm.wipeout()
-	case IS_ALIVE:
-		errCode = is_alive()
-	case GET_PID:
-		pid, errCode = getpid()
-	case GET_MC:
-		_ = getmemcount()
-	default:
-		errCode = UNKWN_CMD
+	if getCurrMem()  < MEM_LIM_MB {
+		switch cast_req.GetCommand() {
+		case PUT:
+			errCode = sm.put(cast_req.GetKey(), cast_req.GetValue(), cast_req.GetVersion())
+		case GET:
+			value, errCode = sm.get(cast_req.Key)
+		case REMOVE:
+			errCode = sm.remove(cast_req.Key)
+		case SHUTDOWN:
+			shutdown()
+		case WIPEOUT:
+			errCode = sm.wipeout()
+		case IS_ALIVE:
+			errCode = is_alive()
+		case GET_PID:
+			pid, errCode = getpid()
+		case GET_MC:
+			_ = getmemcount(gms)
+		default:
+			errCode = UNKWN_CMD
+		}
+	} else {
+		errCode = SYS_OVRLD
 	}
 
 	kvres := &protobuf.KVResponse{
@@ -284,27 +236,20 @@ func (sm *StorageModule) message_handler(message []byte) []byte {
 	return serialResponse
 }
 
-//-----------------------------------------
-//DATABASE FUNCTIONS-----------------------
 
-/**
- * @Description:Puts some value (and corresponding version)
- *into the store. The value (and version) can be later retrieved using the key.
- * @param key
- * @param value
- * @param version
- * @return []byte
- */
+// @Description:Puts some value (and corresponding version)
+// into the store. The value (and version) can be later retrieved using the key.
+// @param key
+// @param value
+// @param version
+// @return []byte
+
 func (sm *StorageModule) put(key []byte, value []byte, version int32) uint32 {
 	if int(len(value)) > 10000 {
 		return INV_VAL
 	}
 
-	if getCurrMem() < uint64(MAP_SIZE_MB) {
-		// zipValue,err:=gzipString(value)
-		// if(err!=nil){
-		// 	fmt.Println(err)
-		// }
+	if getCurrMem() < uint64(STORE_SIZE_MB) {
 		sm.kvsLock.Lock()
 		sm.kvStore[string(key)] = value
 		sm.kvsLock.Unlock()
@@ -315,11 +260,11 @@ func (sm *StorageModule) put(key []byte, value []byte, version int32) uint32 {
 	return OK
 }
 
-/**
- * @Description:Returns the value and version that is associated with the key. If there is no such key in your store, the store should return error (not found).
- * @param key
- * @return []byte
- */
+
+// @Description:Returns the value and version that is associated with the key. If there is no such key in your store, the store should return error (not found).
+// @param key
+// @return []byte
+
 func (sm *StorageModule) get(key []byte) ([]byte, uint32) {
 	sm.kvsLock.Lock()
 	value, found := sm.kvStore[string(key)]
@@ -328,19 +273,15 @@ func (sm *StorageModule) get(key []byte) ([]byte, uint32) {
 	if !found {
 		return nil, NO_KEY
 	}
-	// unziped,err:=unzipgzipString(value)
-	// if err!= nil {
-	// 	fmt.Println(err)
-	// }
-	// return unziped, OK
+
 	return value, OK
 }
 
-/**
- * @Description:Removes the value that is associated with the key.
- * @param key
- * @return []byte
- */
+
+// @Description:Removes the value that is associated with the key.
+// @param key
+// @return []byte
+
 func (sm *StorageModule) remove(key []byte) uint32 {
 
 	sm.kvsLock.Lock()
@@ -360,51 +301,51 @@ func (sm *StorageModule) remove(key []byte) uint32 {
 
 }
 
-/**
- * @Description: calls os.shutdown
- */
+
+// @Description: calls os.shutdown
+
 func shutdown() {
 	os.Exit(555)
 }
 
-/**
- * @Description: clears the database
- * @return []byte
- */
+
+// @Description: clears the database
+// @return []byte
+
 func (sm *StorageModule) wipeout() uint32 {
-	sm.kvsLock.Lock() //<<<<<<<<<<<<<<<MAP LOCK
+	sm.kvsLock.Lock()
 	sm.kvStore = make(map[string][]byte)
-	sm.kvsLock.Unlock() //<<<<<<<<<<<<<<<MAP UNLOCK
+	sm.kvsLock.Unlock()
 
 	return OK
 }
 
-/**
- * @Description: response indicating server is alive
- * @return []byte
- */
+
+// @Description: response indicating server is alive
+// @return []byte
+
 func is_alive() uint32 {
 	fmt.Println("CLIENT ASKED IF SERVER ALIVE")
 
 	return OK
 }
 
-/**
- * @Description: gets the current procressID
- * @return []byte
- */
+
+// @Description: gets the current procressID
+// @return []byte
+
 func getpid() (int32, uint32) {
 	pid := int32(syscall.Getpid())
 
 	return pid, OK
 }
 
-/**
- * @Description: returns number of members
- * @return []byte
- */
-func getmemcount() int32 {
-	return 1 //TODO RETURNING 1 for now
+
+// @Description: returns number of members
+// @return []byte
+
+func getmemcount(gms *membership.MembershipService) int32 {
+	return int32(len(gms.GetAllNodes()))
 }
 
 func bToMb(b uint64) uint64 {
@@ -414,5 +355,5 @@ func bToMb(b uint64) uint64 {
 func getCurrMem() uint64 {
 	var m runtime.MemStats
 	runtime.ReadMemStats(&m)
-	return bToMb((m.Alloc))
+	return bToMb((m.Alloc + m.StackInuse + m.MSpanInuse + m.MCacheInuse))
 }
