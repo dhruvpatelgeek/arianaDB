@@ -1,5 +1,20 @@
 # Spirit of Fire: Distributed Hash Table
 Team members: Dhruv Patel, Caleb Sattler, Danny Lee, Patrick Huang
+### Contributions
+
+#### Group Membership Team
+- ````Datsgood (Danny Lee)````			-> Group Membership and Optimizations 
+- ````patrick-ubc(Patrick Huang)````	-> Group Membership and Optimizations 
+
+#### Storage & Transport Team
+- ````CLewisS (Caleb Sattler)````		-> Storage,Transport and Optimizations 
+- ````dhruvpatelgeek(Dhruv Patel)````	-> Storage,Transport and Optimizations 
+
+Note : We have 2 more repos previously, and most of the git commit history can be
+found in those repos(https://github.com/Datsgood/cpen431-sathish-dream-team && 
+https://github.com/CLewisS/new-beginnings). We did a lot of pair programming and
+we strongly think everyone contributed equally to this project.
+
 ### Instructions
 1. To build the project, run the command: `docker build -t dht .`
 2. To run the project, run the command: `docker run -it -p 3000:3000/udp -v <folder-path-to-servers.txt>:/etc/cpen431 cpen431 ./dht-server 3000 /etc/cpen431/servers.txt`
