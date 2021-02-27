@@ -2,9 +2,9 @@
 Team members: Dhruv Patel, Caleb Sattler, Danny Lee, Patrick Huang
 
 ### Instructions
-1. To build the project, run the command: `docker build -t dht .`
-2. To run the project, run the command: `docker run -it -p 3000:3000/udp -v <folder-path-to-servers.txt>:/etc/cpen431 cpen431 ./dht-server 3000 /etc/cpen431/servers.txt`
-    - For example, if servers.txt exists in "/hello/world/server.txt" in the host, then run the command: `docker run -it -p 3000:3000/udp -v /hello/world/server.txt:/etc/cpen431 cpen431 ./dht-server 3000 /etc/cpen431/servers.txt`
+1. To build the project, run the command: `docker build -t final .`
+2. To run the project, run the command: `docker run --network host -p 7262/udp -v /root/mount:/etc/cpen431 final ./dht-server 7262 /etc/cpen431/servers.txt &`
+    - For example, if servers.txt exists in "/root/mount/servers.txt" in the host, then run the command: `docker run --network host -p 7262/udp -v /root/mount:/etc/cpen431 final ./dht-server 7262 /etc/cpen431/servers.txt &`
 
 ### System Overview
 ![Basic system architecture](images/M1_Arch.png)
