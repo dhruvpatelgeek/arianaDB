@@ -268,6 +268,8 @@ func (gms *MembershipService) processMessage(msgReceived []byte) {
 	}
 }
 
+// When a new node sends join request to whoever nodes it knows, that know will
+// send it back its membership list.
 func (gms *MembershipService) processSendJoinRequest(request *protobuf.MembershipReq) error {
 	requestor := request.GetJoinDestinationAddress()
 	if requestor != gms.address {
@@ -302,7 +304,6 @@ func (gms *MembershipService) processSendJoinRequest(request *protobuf.Membershi
 
 // sendList(): send this node's membership list to the destination address
 func (gms *MembershipService) sendList(destination string) {
-	// TODO: Here we should probably modify the command to HeartbeatGossipCommand
 	isSuccessful, payload := gms.marshalMembershipRequest(HeartbeatGossipCommand, gms.GetAllNodes())
 	if !isSuccessful {
 		return
@@ -311,10 +312,10 @@ func (gms *MembershipService) sendList(destination string) {
 	gms.transport.Send(payload, generateMessageID(), destination)
 }
 
+//GetAllNodes () return all membership lists as an array of string
 func (gms *MembershipService) GetAllNodes() []string {
 	var allNodes []string
 
-	// TODO: put a lock around it
 	gms.membersListLock.Lock()
 	for key, val := range gms.members {
 		if val.isAlive {
@@ -326,12 +327,15 @@ func (gms *MembershipService) GetAllNodes() []string {
 	return allNodes
 }
 
+
+// generate messageID
 func generateMessageID() []byte {
 	id := uuid.New().String()
 
 	return []byte("gossip" + id)
 }
 
+// marshal membershipRequest
 func (gms *MembershipService) marshalMembershipRequest(command uint32, list []string) (bool, []byte) {
 	MReq := &protobuf.MembershipReq{
 		SourceAddress: gms.address,
@@ -347,6 +351,8 @@ func (gms *MembershipService) marshalMembershipRequest(command uint32, list []st
 	return true, data
 }
 
+
+// unmarshal membershipRequest
 func unmarshalMembershipRequest(list []byte) (*protobuf.MembershipReq, error) {
 	MReq := &protobuf.MembershipReq{}
 	err := proto.Unmarshal(list, MReq)
@@ -356,6 +362,7 @@ func unmarshalMembershipRequest(list []byte) (*protobuf.MembershipReq, error) {
 	return MReq, nil
 }
 
+// create a new membershiplist Value
 func createNewMembersListValue() *membersListValue {
 	val := membersListValue{
 		isAlive:            false,

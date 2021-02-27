@@ -71,8 +71,6 @@ func New(ip string, port int, gmsChan chan []byte, StorageChan chan protobuf.Int
 
 	go proportionalCollector()
 
-	//go tm.daemonSpawner()
-
 	return tm, nil
 
 }
@@ -95,16 +93,11 @@ func (tm *TransportModule) Send(payload []byte, messageID []byte, destAddr strin
 		log.Println("Address error ", err)
 	}
 
-	//log.Println("Sending ", destAddr)
 
 	tm.connection.WriteToUDP(message, addr)
 }
 
-/*
-var connection *net.UDPConn
 
-var GroupSend = make(chan Message)
-*/
 //------------------------------------------
 
 //optimizations----------------------------
@@ -115,7 +108,6 @@ var GroupSend = make(chan Message)
 func proportionalCollector() {
 	var sleepCtr time.Duration = 1000 * time.Millisecond
 	for {
-		//log.Println("GC")
 		time.Sleep(sleepCtr)
 		sleepCtr = sleepCurve()
 		runtime.GC()
@@ -154,12 +146,7 @@ func sleepCurve() time.Duration {
 // purges expired items every 1 seconds
 var message_cache = cache.New(5*time.Second, 1*time.Nanosecond)
 
-/**
- * @Description:  check if the data is in the cache if it is return true and the cache val
- * @param message_id
- * @return []byte
- * @return bool
- */
+// check if the data is in the cache if it is return true and the cache value
 func check_cache(message_id []byte) ([]byte, bool) {
 	if debug {
 		fmt.Println("checking cache...")
@@ -182,12 +169,7 @@ func check_cache(message_id []byte) ([]byte, bool) {
 	}
 }
 
-/**
- * @Description: put data in the cache
- * @param message_id
- * @param data
- * @return bool
- */
+// puts the data into the cache
 func cache_data(message_id []byte, data []byte) bool {
 	if get_mem_usage() > uint64(MEMORY_LIMIT-20) {
 		return true
@@ -206,21 +188,13 @@ func cache_data(message_id []byte, data []byte) bool {
 //-----------------------------------------
 
 //HELPER FUNCTIONS-------------------------
-/**
- * @Description: checks if port is valid
- * @param port
- * @return bool
- */
+
+// checks if the port is valid
 func validPort(port int) bool {
 	return (port < 65535) || (port > 0)
 }
 
-/**
- * @Description:  returns the ieee checksum
- * @param a
- * @param b
- * @return uint64
- */
+// return the IEEE checksums of byte a+b
 func calculate_checksum(a []byte, b []byte) uint64 {
 	var concat_byte_arr = append(a, b...)
 	var check_sum = uint64(crc32.ChecksumIEEE(concat_byte_arr))
@@ -230,17 +204,9 @@ func calculate_checksum(a []byte, b []byte) uint64 {
 //-----------------------------------------
 
 //UDP SERVER FUNC--------------------------
-/**
- * @Description:  go routine to serve a client
- * @param connection
- * @param conduit
- * @param thread_num
- */
-func (tm *TransportModule) UDP_daemon(connection *net.UDPConn, conduit chan int, thread_num int) {
-	if debug {
-		fmt.Println("THREAD SPAWNED->", thread_num)
-	}
-	// count := 0
+
+// a udp background function that reads the udp  byte buffer and calls the router
+func (tm *TransportModule) UDP_daemon() {
 
 	for {
 		buffer := make([]byte, 20100)
@@ -248,16 +214,14 @@ func (tm *TransportModule) UDP_daemon(connection *net.UDPConn, conduit chan int,
 		for err != nil {
 			fmt.Println("listener failed - ", err)
 		}
-		// if count%500 == 0 {
-		// 	fmt.Println(count)
-		// }
-		// count++
 
 		tm.router(buffer[:n], remoteAddr.String())
 	}
 
 }
 
+// initalizes a UDP listern on the given port
+// and returns the conneciton object
 func listen(selfIP string, port int) *net.UDPConn {
 	var err error
 
@@ -284,11 +248,8 @@ func listen(selfIP string, port int) *net.UDPConn {
 	return connection
 }
 
-/**
- * @Description: inialises the server based on port number
- * @param args
- */
 
+//initialises the server based on port number
 func (tm *TransportModule) Init_server() {
 	if MULTI_CORE_MODE {
 		fmt.Println("[MULTICORE MODE] [", runtime.NumCPU(), "] SPANNERS AT PORT [", tm.connection.LocalAddr(), "] SYS MEM LIMIT [", MEMORY_LIMIT, "]")
@@ -296,14 +257,12 @@ func (tm *TransportModule) Init_server() {
 
 	//go proportionalCollector()
 	// tm.daemonSpawner()
-	go tm.UDP_daemon(tm.connection, nil, 0)
+	go tm.UDP_daemon()
 
 }
 
-/**
- * @Description: for debug to view packet b4 sending
- * @param arr
- */
+
+//for debug to view packet b4 sending
 func double_check(arr []byte) {
 	cast_whole_req := &protobuf.Msg{
 		MessageID: nil,
@@ -330,10 +289,8 @@ func double_check(arr []byte) {
 
 //copied form
 //https://golang.org/pkg/runtime/#MemStats
-/**
- * Description: retunrs current sys mem usage
- * return uint64
- */
+
+// Description: returns current sys mem usage
 func get_mem_usage() uint64 {
 	var m runtime.MemStats
 	runtime.ReadMemStats(&m)
@@ -451,6 +408,7 @@ func (tm *TransportModule) nodeReq(node2nodePayload []byte, messageID []byte) {
 	}
 }
 
+// this is a function to reposnd to a request form a different node
 func (tm *TransportModule) nodeRes(node2nodePayload []byte, messageID []byte) {
 	// send the internalPayload to the client
 	node2nodeMsg := &protobuf.InternalMsg{}
@@ -462,10 +420,8 @@ func (tm *TransportModule) nodeRes(node2nodePayload []byte, messageID []byte) {
 	tm.Send(response, messageID, node2nodeMsg.GetClientAddr())
 }
 
-// grt local address
-
 //https://stackoverflow.com/questions/23558425/how-do-i-get-the-local-ip-address-in-go
-//retunr the local address of the machine
+//returns the local address of the machine
 func GetLocalAddr() string {
 
 	arguments := os.Args
@@ -481,6 +437,8 @@ func GetLocalAddr() string {
 	return address
 }
 
+
+// send the messages but caches the response before sending it
 func (tm *TransportModule) ResSend(payload []byte, messageID string, destAddr string) {
 	cache_data([]byte(messageID), payload)
 	tm.Send(payload, []byte(messageID), destAddr)

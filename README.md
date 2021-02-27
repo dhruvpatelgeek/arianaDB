@@ -1,4 +1,8 @@
 # Spirit of Fire: Distributed Hash Table
+<<<<<<< HEAD
+=======
+Team members: Dhruv Patel, Caleb Sattler, Danny Lee, Patrick Huang
+>>>>>>> a28c9de749d0b3547b20d96dc8bb0d3387d9d912
 ### Contributions
 
 #### Group Membership Team
@@ -9,8 +13,15 @@
 - ````CLewisS (Caleb Sattler)````		-> Storage,Transport and Optimizations 
 - ````dhruvpatelgeek(Dhruv Patel)````	-> Storage,Transport and Optimizations 
 
+<<<<<<< HEAD
 Note : We did a lot of pair programming so even if it might look like some members have not commited as much code 
 we strongly think everyone contributed equally to this project 
+=======
+Note : We have 2 more repos previously, and most of the git commit history can be
+found in those repos(https://github.com/Datsgood/cpen431-sathish-dream-team && 
+https://github.com/CLewisS/new-beginnings). We did a lot of pair programming and
+we strongly think everyone contributed equally to this project.
+>>>>>>> a28c9de749d0b3547b20d96dc8bb0d3387d9d912
 
 ### Instructions
 1. To build the project, run the command: `docker build -t dht .`
@@ -18,6 +29,9 @@ we strongly think everyone contributed equally to this project
     - For example, if servers.txt exists in "/hello/world/server.txt" in the host, then run the command: `docker run -it -p 3000:3000/udp -v /hello/world/server.txt:/etc/cpen431 cpen431 ./dht-server 3000 /etc/cpen431/servers.txt`
 
 ### System Overview
+![Basic system architecture](images/M1_Arch.png)
+
+
 Spirit of Fire's distributed hash table (DHT) is composed of 3 components in Milestone 1: the transport layer, the storage component, and the group membership service.
 
 Sitting at the base of the application, the transport layer allows the storage component and the group membership service to communicate with other nodes via UDP while upholding at-most-once semantics via a message cache.
@@ -34,7 +48,8 @@ The group membership service maintains a list of all nodes in the system using a
 ### Transport Layer
 TODO:
 ### Storage Service
-TODO: 
+The storage service module maintains a map based key-value store, and executes consistent hasing for key distribution amongst nodes using SHA256.
+ 
 ### Group Membership Service
 Spirit of Fire's Group Membership Service (GMS) implements a push-based gossip protocol based on [Lecture 4: Failure Detection and Membership by Indranil Gupta (Indy)](https://courses.engr.illinois.edu/cs425/fa2014/L4.fa14.pdf). 
 
