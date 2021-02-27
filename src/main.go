@@ -55,19 +55,18 @@ func main() {
 	_ = <-doneChan
 }
 
-/** validateArgs() extracts the "port" and "initial peers list" from the constructor args.
-- returns error if:
-	- incorrect number of arguments. Expects 2 arguments to be passed: $port $peersfile
-	- $port is not an integer
-	- $port is out-of-bounds (valid if port is in [0,65535])
-	- unable to open file at $peersfile
-	- faied to read $peersfile.
-
-- "initial peers list" ignores invalid entries where an entry is invalid if:
-	- a line is not of the form "ip:port"
-	- "ip" is not a valid IPv4 address
-	- "port" is out-of-bounds.
-*/
+// validateArgs() extracts the "port" and "initial peers list" from the constructor args.
+// - returns error if:
+//	- incorrect number of arguments. Expects 2 arguments to be passed: $port $peersfile
+//	- $port is not an integer
+//	- $port is out-of-bounds (valid if port is in [0,65535])
+//	- unable to open file at $peersfile
+//	- faied to read $peersfile.
+//
+// - "initial peers list" ignores invalid entries where an entry is invalid if:
+//	- a line is not of the form "ip:port"
+//	- "ip" is not a valid IPv4 address
+//	- "port" is out-of-bounds.
 func validateArgs(args []string) (port string, initialMembers []string, err error) {
 	if len(args) != 2 {
 		return "", nil, errors.New("Must provide exactly 2 arguments")

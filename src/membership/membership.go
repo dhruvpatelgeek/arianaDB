@@ -8,6 +8,7 @@ import (
 	"math/rand"
 	"net"
 	"strconv"
+
 	"sync"
 	"time"
 
@@ -15,6 +16,7 @@ import (
 	"github.com/google/uuid"
 )
 
+// Number of nodes to gossip during every heartbeat Period
 const FANOUT = 4
 
 // SendJoinCommand is a command sent by new joins node
@@ -40,7 +42,7 @@ type membersListValue struct {
 
 type MembershipService struct {
 	address         string
-	members         map[string]*membersListValue // TODO: check if this works
+	members         map[string]*membersListValue
 	membersListLock sync.Mutex
 	transport       *transport.TransportModule
 	receiveChannel  chan []byte
@@ -51,7 +53,7 @@ type MembershipService struct {
 // must be requested through the receiveChannel.
 //
 // During the construction, this node will bootstrap by attempting to connect to all members given as the "initialMembers".
-// If this node failChecked to connect to a node in the "initialMembers", it will ignore the failed node.
+// If this node failed to connect to a node in the "initialMembers", it will ignore the failed node.
 //
 // Current implementation uses 4 threads:
 // 	- worker thread who listens and processes messages
@@ -104,15 +106,15 @@ func New(
 	return gms, nil
 }
 
+// The fail thread checks every **TimeFail** period and mark a node as fail if it hasn't sent any
+// message to this node within a certain amount of time.
 func (gms *MembershipService) failCheck() {
 	for {
-		// sleep for a certain amount of time
 		time.Sleep(TimeFail * time.Millisecond)
-		checkTime := getCurrentTimeInMilliSec()
-		// iterate through membership lists and check if failChecked:
+
 		gms.membersListLock.Lock()
 		for addr := range gms.members {
-			if addr != gms.address && gms.members[addr].heartbeatTimestamp < checkTime-TimeFail {
+			if addr != gms.address && gms.members[addr].heartbeatTimestamp < getCurrentTimeInMilliSec()-TimeFail {
 				gms.members[addr].isAlive = false
 			}
 		}
@@ -120,13 +122,13 @@ func (gms *MembershipService) failCheck() {
 	}
 }
 
+// The cleanUp thread checks every **TimeCleanup** period and delete a node if it hasn't sent any
+// message to this node within a certain amount of time.
 func (gms *MembershipService) cleanupCheck() {
 
 	for {
-		// sleep for a certain amount of time
 		time.Sleep(TimeCleanup * time.Millisecond)
 
-		// iterate through membership lists and check if failChecked:
 		gms.membersListLock.Lock()
 		for member, element := range gms.members {
 			if !element.isAlive && element.heartbeatTimestamp < getCurrentTimeInMilliSec()-TimeCleanup {
@@ -138,9 +140,10 @@ func (gms *MembershipService) cleanupCheck() {
 	}
 }
 
+// Heartbeat Thread send hearbeat message to randomly chosen **FANOUT** number of nodes
+// in every **TimeHeartbeat** amount of time
 func (gms *MembershipService) heartbeat() {
 	for {
-		// sleep for a cretain amount of time.
 		time.Sleep(TimeHeartbeat * time.Millisecond)
 		if len(gms.members) > 1 {
 			addresses := gms.getGossipGroup()
@@ -178,32 +181,18 @@ func (gms *MembershipService) getGossipGroup() []string {
 	return otherMembers[:subsetSize]
 }
 
-func (gms *MembershipService) chooseRandomKey() string {
-	i := int(float32(len(gms.members)-1) * rand.Float32())
-	for k, _ := range gms.members {
-		if k == gms.address {
-			continue
-		}
-		if i == 0 {
-			return k
-		} else {
-			i--
-		}
-	}
-	return ""
-}
-
+// Get the current time in milli sec
 func getCurrentTimeInMilliSec() int64 {
 	return time.Now().UnixNano() / int64(time.Millisecond)
 }
 
+// Process when received a heartbeat message
 func (gms *MembershipService) processHeartbeat(request *protobuf.MembershipReq) error {
 	destination := request.GetSourceAddress()
 	if destination == "" {
 		return errors.New("[ERROR] Received a send request without a destination")
 	}
 
-	// compare the difference between those two lists and merge
 	gms.membersListLock.Lock()
 	addresses := request.GetMembersList()
 	for _, address := range addresses {
@@ -219,6 +208,8 @@ func (gms *MembershipService) processHeartbeat(request *protobuf.MembershipReq) 
 	return nil
 }
 
+// Whenever a new node join the system, it should get membership lists from other members
+// it previously knowed.
 func (gms *MembershipService) bootstrap(initialMembers []string) {
 	fmt.Println("initial members list:", initialMembers)
 	for _, address := range initialMembers {
@@ -241,6 +232,7 @@ func (gms *MembershipService) bootstrap(initialMembers []string) {
 	}
 }
 
+// process when received message from channel
 func (gms *MembershipService) listenToReceiveChannel() {
 	for {
 		select {
@@ -250,6 +242,8 @@ func (gms *MembershipService) listenToReceiveChannel() {
 	}
 }
 
+// Whenever received a message from channel, this function tries to classify what kind of
+// message it is and use different functions to handle different kinds of message.
 func (gms *MembershipService) processMessage(msgReceived []byte) {
 	membershipRequest, err := unmarshalMembershipRequest(msgReceived)
 	if err != nil {

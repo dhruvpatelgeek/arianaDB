@@ -35,23 +35,25 @@ var MULTI_CORE_MODE = true
 var MAP_SIZE_MB = 70
 var CACHE = 10
 var CACHE_LIFESPAN = 5 // how long should the cache persist
-
 var LOCAL_PORT string
 
 //CONNECTION-------------------------------
 
+// message struct for communicatino with the storage layer
 type Message struct {
 	ClientAddr string
 	Payload    []byte
 	MessageID  string
 }
 
+// message struct for communicating with the transport module
 type TransportModule struct {
 	connection  *net.UDPConn
 	GroupSend   chan []byte
 	StorageChan chan protobuf.InternalMsg
 }
 
+// initilaizes the transport layer
 func New(ip string, port int, gmsChan chan []byte, StorageChan chan protobuf.InternalMsg) (*TransportModule, error) {
 
 	LOCAL_PORT = strconv.Itoa(port)
@@ -75,6 +77,7 @@ func New(ip string, port int, gmsChan chan []byte, StorageChan chan protobuf.Int
 
 }
 
+// send function for sending a payload
 func (tm *TransportModule) Send(payload []byte, messageID []byte, destAddr string) {
 	message, err := generateShell(payload, messageID)
 	if err != nil {
@@ -106,6 +109,9 @@ var GroupSend = make(chan Message)
 
 //optimizations----------------------------
 
+// auto scaling collector that adjusts its collection rate wrt how much memory it has left
+// like a P controller in control systems engineering
+// the proportionalCollector will increase the number of GC calls when the memory is low
 func proportionalCollector() {
 	var sleepCtr time.Duration = 1000 * time.Millisecond
 	for {
@@ -116,6 +122,8 @@ func proportionalCollector() {
 	}
 }
 
+// helper funciton for proportionalCollector
+// sets the GC sleep rate
 func sleepCurve() time.Duration {
 	var m runtime.MemStats
 	runtime.ReadMemStats(&m)
@@ -147,7 +155,7 @@ func sleepCurve() time.Duration {
 var message_cache = cache.New(5*time.Second, 1*time.Nanosecond)
 
 /**
- * @Description:  check if the data is in the cache
+ * @Description:  check if the data is in the cache if it is return true and the cache val
  * @param message_id
  * @return []byte
  * @return bool
@@ -323,8 +331,8 @@ func double_check(arr []byte) {
 //copied form
 //https://golang.org/pkg/runtime/#MemStats
 /**
- * @Description: retunrs current sys mem usage
- * @return uint64
+ * Description: retunrs current sys mem usage
+ * return uint64
  */
 func get_mem_usage() uint64 {
 	var m runtime.MemStats
@@ -337,6 +345,8 @@ func get_mem_usage() uint64 {
 	return bToMb(m.Sys)
 }
 
+//for memory profiling
+// prints the current memory usage
 func PrintMemUsage() {
 	for {
 		var m runtime.MemStats
@@ -350,10 +360,12 @@ func PrintMemUsage() {
 	}
 }
 
+// converts megabytes to bytes
 func bToMb(b uint64) uint64 {
 	return b / 1024 / 1024
 }
 
+// warps the payload in the Message protocol buffer
 func generateShell(payload []byte, messageId []byte) ([]byte, error) {
 	checksum := calculate_checksum([]byte(messageId), payload)
 	shell := &protobuf.Msg{
@@ -370,6 +382,11 @@ func generateShell(payload []byte, messageId []byte) ([]byte, error) {
 	return marshelledShell, err
 }
 
+// uses the messageID to route the message to different modules
+// if message is prepended with
+// gossip-> send to the group membership
+// reques-> send to node request
+// if the message is nno prepended with anything send to storage layer to be procressed
 func (tm *TransportModule) router(serialMsg []byte, clientAddr string) {
 
 	msg := &protobuf.Msg{}
@@ -393,7 +410,9 @@ func (tm *TransportModule) router(serialMsg []byte, clientAddr string) {
 	}
 }
 
-// no pre pend
+// for handelling  a client request
+// checks if the message is cached if it is send the respsonse
+// else send it to the sotrage layer to be procressed
 func (tm *TransportModule) clientReq(payload []byte, messageID []byte, clientAddr string) {
 	cachedResponse, found := check_cache(messageID)
 	if found {
@@ -412,11 +431,14 @@ func (tm *TransportModule) clientReq(payload []byte, messageID []byte, clientAdd
 	}
 }
 
+// forward the message to the group membership module
 func (tm *TransportModule) gossipPrepend(payload []byte, clientAddr string) {
 	tm.GroupSend <- payload
 }
 
-// node req prepend
+// this is the funciton call if the recived message is fomr an other node
+// in this case  will see if it is cached
+//
 func (tm *TransportModule) nodeReq(node2nodePayload []byte, messageID []byte) {
 	node2nodeMsg := &protobuf.InternalMsg{}
 	proto.Unmarshal(node2nodePayload, node2nodeMsg)
