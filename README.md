@@ -1,4 +1,17 @@
 # Spirit of Fire: Distributed Hash Table
+### Contributions
+
+#### Group Membership Team
+- ````Datsgood (Danny Lee)````			-> Group Membership and Optimizations 
+- ````patrick-ubc(Patrick Huang)````	-> Group Membership and Optimizations 
+
+#### Storage & Transport Team
+- ````CLewisS (Caleb Sattler)````		-> Storage,Transport and Optimizations 
+- ````dhruvpatelgeek(Dhruv Patel)````	-> Storage,Transport and Optimizations 
+
+Note : We did a lot of pair programming so even if it might look like some members have not commited as much code 
+we strongly think everyone contributed equally to this project 
+
 ### Instructions
 1. To build the project, run the command: `docker build -t dht .`
 2. To run the project, run the command: `docker run -it -p 3000:3000/udp -v <folder-path-to-servers.txt>:/etc/cpen431 cpen431 ./dht-server 3000 /etc/cpen431/servers.txt`
