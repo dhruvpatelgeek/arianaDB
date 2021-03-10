@@ -13,6 +13,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"time"
 )
 
 func main() {
@@ -49,6 +50,11 @@ func main() {
 
 	// initialize storage service
 	storage.New(transport, storageChannel, gms)
+
+	for {
+		time.Sleep(5000 * time.Millisecond)
+		fmt.Println(gms.GetAllNodes())
+	}
 
 	// block main thread from ending and closing application
 	doneChan := make(chan error, 1)

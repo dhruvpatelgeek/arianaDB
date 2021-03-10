@@ -223,7 +223,7 @@ func (gms *MembershipService) bootstrap(initialMembers []string) {
 
 			marshalledJoinRequest, err := proto.Marshal(joinRequest)
 			if err == nil {
-				gms.transport.Send(marshalledJoinRequest, generateMessageID(), address)
+				gms.transport.SendHeartbeat(marshalledJoinRequest, generateMessageID(), address)
 			} else {
 				fmt.Println(err)
 			}
@@ -298,7 +298,7 @@ func (gms *MembershipService) processSendJoinRequest(request *protobuf.Membershi
 		return err
 	}
 
-	gms.transport.Send(payload, generateMessageID(), destination)
+	gms.transport.SendHeartbeat(payload, generateMessageID(), destination)
 	return nil
 }
 
@@ -309,7 +309,7 @@ func (gms *MembershipService) sendList(destination string) {
 		return
 	}
 
-	gms.transport.Send(payload, generateMessageID(), destination)
+	gms.transport.SendHeartbeat(payload, generateMessageID(), destination)
 }
 
 //GetAllNodes () return all membership lists as an array of string
@@ -326,7 +326,6 @@ func (gms *MembershipService) GetAllNodes() []string {
 
 	return allNodes
 }
-
 
 // generate messageID
 func generateMessageID() []byte {
@@ -350,7 +349,6 @@ func (gms *MembershipService) marshalMembershipRequest(command uint32, list []st
 	}
 	return true, data
 }
-
 
 // unmarshal membershipRequest
 func unmarshalMembershipRequest(list []byte) (*protobuf.MembershipReq, error) {

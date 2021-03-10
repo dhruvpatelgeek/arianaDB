@@ -26,8 +26,9 @@ import (
 
 //CONTROL PANEL----------------------------
 var debug = false
+
 const STORE_SIZE_MB = 100 // memory HARD LIMIT
-const MEM_LIM_MB = 120 // memory HARD LIMIT
+const MEM_LIM_MB = 120    // memory HARD LIMIT
 
 // Command numbers
 const PUT = 1
@@ -57,10 +58,9 @@ type StorageModule struct {
 	kvsLock *sync.Mutex
 }
 
-
 // @Description: Computes the numerical difference between
 // the key's hash and the node's hash
-// @param key 
+// @param key
 // @param node
 // @return *big.Int
 func hashDifference(key *big.Int, node *big.Int) *big.Int {
@@ -86,7 +86,7 @@ func hashDifference(key *big.Int, node *big.Int) *big.Int {
 }
 
 // @Description: returns the key's hash value as a big int
-// @param key 
+// @param key
 // @return *big.Int - Hash digest
 func hashInt(key string) *big.Int {
 	keyHash := hash(key)
@@ -95,13 +95,12 @@ func hashInt(key string) *big.Int {
 }
 
 // @Description: returns the input string's sha256 digest
-// @param str 
+// @param str
 // @return []byte - SHA256 digest
 func hash(str string) []byte {
 	digest := sha256.Sum256([]byte(str))
 	return digest[:]
 }
-
 
 // @Description: Determines which node is responsible for the given key
 // @param key
@@ -162,10 +161,10 @@ func (sm *StorageModule) runModule(tm *transport.TransportModule, reqFrom_tm cha
 			unmarshalled_payload := &protobuf.KVRequest{}
 			proto.Unmarshal(req.Payload, unmarshalled_payload)
 			destAddr := keyRoute(unmarshalled_payload.Key, gms)
-
+			// TODO: move 166 to cood
 			if destAddr == transport.GetLocalAddr() {
 				response := sm.message_handler(req.Payload, gms)
-				tm.ResSend(response, string(req.Message), req.ClientAddr)
+				tm.CachedSendStorageToStorage(response, string(req.Message), req.ClientAddr)
 			} else {
 				internalPayload_new := req
 				internalPayload_new.OriginAddr = transport.GetLocalAddr()
@@ -173,19 +172,20 @@ func (sm *StorageModule) runModule(tm *transport.TransportModule, reqFrom_tm cha
 				if err != nil {
 					log.Println("[ERTICAL CASTINF ERROR][234]")
 				} else {
-					tm.Send(marshalled_internalPayload, []byte("reques"+string(req.Message)), destAddr)
+					tm.SendStorageToStorage(marshalled_internalPayload, []byte("reques"+string(req.Message)), destAddr) // TODO:
 				}
 			}
+			//TODO
 		} else {
 			response := sm.message_handler(req.Payload, gms)
-			tm.ResSend(response, string(req.Message), req.ClientAddr)
+			tm.CachedSendStorageToStorage(response, string(req.Message), req.ClientAddr)
 		}
 	}
 }
 
- // @Description: peals the seconday message layer and performs server functions returns the genarated payload
- // @param message
- // @return []byte
+// @Description: peals the seconday message layer and performs server functions returns the genarated payload
+// @param message
+// @return []byte
 func (sm *StorageModule) message_handler(message []byte, gms *membership.MembershipService) []byte {
 	cast_req := &protobuf.KVRequest{}
 	error := proto.Unmarshal(message, cast_req)
@@ -197,7 +197,7 @@ func (sm *StorageModule) message_handler(message []byte, gms *membership.Members
 	var value []byte
 	var pid int32
 
-	if getCurrMem()  < MEM_LIM_MB {
+	if getCurrMem() < MEM_LIM_MB {
 		switch cast_req.GetCommand() {
 		case PUT:
 			errCode = sm.put(cast_req.GetKey(), cast_req.GetValue(), cast_req.GetVersion())
@@ -236,7 +236,6 @@ func (sm *StorageModule) message_handler(message []byte, gms *membership.Members
 	return serialResponse
 }
 
-
 // @Description:Puts some value (and corresponding version)
 // into the store. The value (and version) can be later retrieved using the key.
 // @param key
@@ -260,7 +259,6 @@ func (sm *StorageModule) put(key []byte, value []byte, version int32) uint32 {
 	return OK
 }
 
-
 // @Description:Returns the value and version that is associated with the key. If there is no such key in your store, the store should return error (not found).
 // @param key
 // @return []byte
@@ -276,7 +274,6 @@ func (sm *StorageModule) get(key []byte) ([]byte, uint32) {
 
 	return value, OK
 }
-
 
 // @Description:Removes the value that is associated with the key.
 // @param key
@@ -301,13 +298,11 @@ func (sm *StorageModule) remove(key []byte) uint32 {
 
 }
 
-
 // @Description: calls os.shutdown
 
 func shutdown() {
 	os.Exit(555)
 }
-
 
 // @Description: clears the database
 // @return []byte
@@ -320,7 +315,6 @@ func (sm *StorageModule) wipeout() uint32 {
 	return OK
 }
 
-
 // @Description: response indicating server is alive
 // @return []byte
 
@@ -330,7 +324,6 @@ func is_alive() uint32 {
 	return OK
 }
 
-
 // @Description: gets the current procressID
 // @return []byte
 
@@ -339,7 +332,6 @@ func getpid() (int32, uint32) {
 
 	return pid, OK
 }
-
 
 // @Description: returns number of members
 // @return []byte

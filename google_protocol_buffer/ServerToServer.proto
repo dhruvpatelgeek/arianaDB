@@ -1,0 +1,8 @@
+syntax = "proto3";
+package protobuf;
+option go_package = "pb/protobuf";
+
+message S2S {
+  bytes payload = 1;
+  string whichModule=2;
+}
