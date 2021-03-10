@@ -5,6 +5,7 @@ import (
 	"dht/google_protocol_buffer/pb/protobuf"
 	"dht/src/membership"
 	"dht/src/storage"
+	"dht/src/structure"
 	"dht/src/transport"
 	"errors"
 	"fmt"
@@ -13,7 +14,6 @@ import (
 	"os"
 	"strconv"
 	"strings"
-	"time"
 )
 
 func main() {
@@ -28,6 +28,7 @@ func main() {
 	// construct channels to communicate between transport layer and application layer
 	storageChannel := make(chan protobuf.InternalMsg, 2)
 	gmsChannel := make(chan []byte, 2)
+	GMSToCordinator := make(chan structure.GMSToCordinator)
 
 	// get info about self
 	containerHostname := getOutboundIP().String()
@@ -42,7 +43,7 @@ func main() {
 	go transport.Init_server()
 
 	// initialize group membership service
-	gms, err := membership.New(initialMembers, transport, gmsChannel, containerHostname, port)
+	gms, err := membership.New(initialMembers, transport, gmsChannel, containerHostname, port, GMSToCordinator)
 	if err != nil {
 		log.Fatal("Failed to initialize GMS.", err)
 		panic("Error when creating gms. Abort creating server.")
@@ -51,10 +52,19 @@ func main() {
 	// initialize storage service
 	storage.New(transport, storageChannel, gms)
 
-	for {
-		time.Sleep(5000 * time.Millisecond)
-		fmt.Println(gms.GetAllNodes())
-	}
+	// go func() {
+	// 	for {
+	// 		time.Sleep(5000 * time.Millisecond)
+	// 		fmt.Println(gms.GetAllNodes())
+	// 	}
+	// }()
+
+	// go func() {
+	// 	for {
+	// 		notification := <-GMSToCordinator
+	// 		fmt.Println(notification)
+	// 	}
+	// }()
 
 	// block main thread from ending and closing application
 	doneChan := make(chan error, 1)

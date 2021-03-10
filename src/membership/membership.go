@@ -9,6 +9,7 @@ import (
 	"net"
 	"strconv"
 
+	"dht/src/structure"
 	"sync"
 	"time"
 
@@ -41,11 +42,12 @@ type membersListValue struct {
 }
 
 type MembershipService struct {
-	address         string
-	members         map[string]*membersListValue
-	membersListLock sync.Mutex
-	transport       *transport.TransportModule
-	receiveChannel  chan []byte
+	address                string
+	members                map[string]*membersListValue
+	membersListLock        sync.Mutex
+	transport              *transport.TransportModule
+	receiveChannel         chan []byte
+	GMSToCordinatorChannel chan structure.GMSToCordinator
 }
 
 // New creates a new instance of the GroupMembershipService which manages the set of members in the service.
@@ -66,7 +68,8 @@ func New(
 	transport *transport.TransportModule,
 	receiveChannel chan []byte,
 	myAddress string,
-	myPort string) (*MembershipService, error) {
+	myPort string,
+	GMSToCordinatorChannel chan structure.GMSToCordinator) (*MembershipService, error) {
 
 	gms := new(MembershipService)
 	gms.transport = transport
@@ -92,6 +95,7 @@ func New(
 	gms.members[gms.address] = createNewMembersListValue() // add itself to the membership
 	gms.members[gms.address].isAlive = true
 	gms.membersListLock.Unlock()
+	gms.GMSToCordinatorChannel = GMSToCordinatorChannel
 
 	// begin a thread for listening to the receive channel and processing messages
 	go gms.listenToReceiveChannel()
@@ -133,6 +137,12 @@ func (gms *MembershipService) cleanupCheck() {
 		for member, element := range gms.members {
 			if !element.isAlive && element.heartbeatTimestamp < getCurrentTimeInMilliSec()-TimeCleanup {
 				delete(gms.members, member)
+
+				msg := structure.GMSToCordinator{
+					Status: false,
+					Node:   member,
+				}
+				gms.GMSToCordinatorChannel <- msg
 			}
 		}
 		gms.membersListLock.Unlock()
@@ -299,6 +309,13 @@ func (gms *MembershipService) processSendJoinRequest(request *protobuf.Membershi
 	}
 
 	gms.transport.SendHeartbeat(payload, generateMessageID(), destination)
+
+	msg := structure.GMSToCordinator{
+		Status: true,
+		Node:   destination,
+	}
+	gms.GMSToCordinatorChannel <- msg
+
 	return nil
 }
 
