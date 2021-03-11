@@ -1,13 +1,9 @@
 package storage
 
 import (
-	"crypto/sha256"
 	"dht/google_protocol_buffer/pb/protobuf"
-	"dht/src/membership"
-	"encoding/hex"
 	"fmt"
 	"log"
-	"math/big"
 	"os"
 	"runtime"
 	"sync"
@@ -53,85 +49,9 @@ const UNKWN_CMD = 5
 const INV_KEY = 6
 const INV_VAL = 7
 
-const LESS = -1
-const EQUAL = 0
-const GREATER = 1
-
 type StorageModule struct {
 	kvStore map[string][]byte
 	kvsLock *sync.Mutex
-}
-
-// @Description: Computes the numerical difference between
-// the key's hash and the node's hash
-// @param key
-// @param node
-// @return *big.Int
-func hashDifference(key *big.Int, node *big.Int) *big.Int {
-	diff := big.NewInt(0)
-	max := big.NewInt(0)
-	maxSlice := make([]byte, 256)
-	// Initialize with largest byte value
-	for el := range maxSlice {
-		maxSlice[el] = 15
-	}
-
-	max.SetBytes(maxSlice)
-
-	keyCmp := key.Cmp(node)
-
-	if keyCmp == LESS {
-		return diff.Sub(node, key)
-	} else if keyCmp == EQUAL {
-		return diff.SetInt64(0)
-	} else {
-		return diff.Add(diff.Sub(max, key), node)
-	}
-}
-
-// @Description: returns the key's hash value as a big int
-// @param key
-// @return *big.Int - Hash digest
-func hashInt(key string) *big.Int {
-	keyHash := hash(key)
-	keyHashInt := big.NewInt(0)
-	return keyHashInt.SetBytes(keyHash)
-}
-
-// @Description: returns the input string's sha256 digest
-// @param str
-// @return []byte - SHA256 digest
-func hash(str string) []byte {
-	digest := sha256.Sum256([]byte(str))
-	return digest[:]
-}
-
-// @Description: Determines which node is responsible for the given key
-// @param key
-// @param gms
-// @return string - Location of node responsible for the given key
-func keyRoute(key []byte, gms *membership.MembershipService) string {
-	if len(key) == 0 {
-		return transport.GetLocalAddr()
-	}
-
-	keyHashInt := hashInt(hex.EncodeToString(key))
-
-	nodeList := gms.GetAllNodes()
-
-	responsibleNode := nodeList[0]
-	diff := hashDifference(keyHashInt, hashInt(responsibleNode))
-
-	// Find node responsible for given key
-	for _, currNode := range nodeList {
-		currDiff := hashDifference(keyHashInt, hashInt(currNode))
-		if currDiff.Cmp(diff) == LESS {
-			diff = currDiff
-			responsibleNode = currNode
-		}
-	}
-
-	return responsibleNode
 }
 
 // @Description: Initializes a new storage module
@@ -139,17 +59,14 @@ func keyRoute(key []byte, gms *membership.MembershipService) string {
 // @param reqFrom_tm - channel that transport module send requests on
 // @param gms - group membership service that gives the nodes in the network
 // @return *StorageModule
-func New(
-	tm *transport.TransportModule,
-	reqFrom_tm chan protobuf.InternalMsg,
-	gms *membership.MembershipService) *StorageModule {
+func New(tm *transport.TransportModule, coordinatorMessage chan protobuf.InternalMsg) *StorageModule {
 
 	sm := StorageModule{
 		kvStore: make(map[string][]byte),
 		kvsLock: &sync.Mutex{},
 	}
 
-	go sm.runModule(tm, reqFrom_tm, gms)
+	go sm.runModule(tm, coordinatorMessage)
 
 	return &sm
 }
@@ -158,39 +75,18 @@ func New(
 // @param tm - transport module that sends requests to the storage module
 // @param reqFrom_tm - channel that transport module send requests on
 // @param gms - group membership service that gives the nodes in the network
-func (sm *StorageModule) runModule(tm *transport.TransportModule, reqFrom_tm chan protobuf.InternalMsg, gms *membership.MembershipService) {
+func (sm *StorageModule) runModule(tm *transport.TransportModule, coordinatorMessage chan protobuf.InternalMsg) {
 	for {
-		req := <-reqFrom_tm
-		if req.OriginAddr == "" {
-			unmarshalled_payload := &protobuf.KVRequest{}
-			proto.Unmarshal(req.Payload, unmarshalled_payload)
-			destAddr := keyRoute(unmarshalled_payload.Key, gms)
-			// TODO: move 166 to cood
-			if destAddr == transport.GetLocalAddr() {
-				response := sm.message_handler(req.Payload, gms)
-				tm.CachedSendStorageToStorage(response, string(req.Message), req.ClientAddr)
-			} else {
-				internalPayload_new := req
-				internalPayload_new.OriginAddr = transport.GetLocalAddr()
-				marshalled_internalPayload, err := proto.Marshal(&internalPayload_new)
-				if err != nil {
-					log.Println("[ERTICAL CASTINF ERROR][234]")
-				} else {
-					tm.SendStorageToStorage(marshalled_internalPayload, []byte("reques"+string(req.Message)), destAddr) // TODO:
-				}
-			}
-			//TODO
-		} else {
-			response := sm.message_handler(req.Payload, gms)
-			tm.CachedSendStorageToStorage(response, string(req.Message), req.ClientAddr)
-		}
+		req := <-coordinatorMessage
+		response := sm.message_handler(req.Payload)
+		tm.ResSend(response, string(req.Message), req.ClientAddr)
 	}
 }
 
 // @Description: peals the seconday message layer and performs server functions returns the genarated payload
 // @param message
 // @return []byte
-func (sm *StorageModule) message_handler(message []byte, gms *membership.MembershipService) []byte {
+func (sm *StorageModule) message_handler(message []byte) []byte {
 	cast_req := &protobuf.KVRequest{}
 	error := proto.Unmarshal(message, cast_req)
 	if error != nil {
@@ -218,7 +114,7 @@ func (sm *StorageModule) message_handler(message []byte, gms *membership.Members
 		case GET_PID:
 			pid, errCode = getpid()
 		case GET_MC:
-			_ = getmemcount(gms)
+			_ = getmemcount()
 		default:
 			errCode = UNKWN_CMD
 		}
@@ -246,7 +142,6 @@ func (sm *StorageModule) message_handler(message []byte, gms *membership.Members
 // @param value
 // @param version
 // @return []byte
-
 func (sm *StorageModule) put(key []byte, value []byte, version int32) uint32 {
 	if int(len(value)) > 10000 {
 		return INV_VAL
@@ -266,7 +161,6 @@ func (sm *StorageModule) put(key []byte, value []byte, version int32) uint32 {
 // @Description:Returns the value and version that is associated with the key. If there is no such key in your store, the store should return error (not found).
 // @param key
 // @return []byte
-
 func (sm *StorageModule) get(key []byte) ([]byte, uint32) {
 	sm.kvsLock.Lock()
 	value, found := sm.kvStore[string(key)]
@@ -282,7 +176,6 @@ func (sm *StorageModule) get(key []byte) ([]byte, uint32) {
 // @Description:Removes the value that is associated with the key.
 // @param key
 // @return []byte
-
 func (sm *StorageModule) remove(key []byte) uint32 {
 
 	sm.kvsLock.Lock()
@@ -303,14 +196,12 @@ func (sm *StorageModule) remove(key []byte) uint32 {
 }
 
 // @Description: calls os.shutdown
-
 func shutdown() {
 	os.Exit(555)
 }
 
 // @Description: clears the database
 // @return []byte
-
 func (sm *StorageModule) wipeout() uint32 {
 	sm.kvsLock.Lock()
 	sm.kvStore = make(map[string][]byte)
@@ -321,7 +212,6 @@ func (sm *StorageModule) wipeout() uint32 {
 
 // @Description: response indicating server is alive
 // @return []byte
-
 func is_alive() uint32 {
 	fmt.Println("CLIENT ASKED IF SERVER ALIVE")
 
@@ -330,7 +220,6 @@ func is_alive() uint32 {
 
 // @Description: gets the current procressID
 // @return []byte
-
 func getpid() (int32, uint32) {
 	pid := int32(syscall.Getpid())
 
@@ -339,9 +228,8 @@ func getpid() (int32, uint32) {
 
 // @Description: returns number of members
 // @return []byte
-
-func getmemcount(gms *membership.MembershipService) int32 {
-	return int32(len(gms.GetAllNodes()))
+func getmemcount() int32 {
+	return 1
 }
 
 func bToMb(b uint64) uint64 {
