@@ -3,8 +3,9 @@ package replication
 import (
 	"testing"
 	"time"
-	"strconv"
 	"encoding/hex"
+
+	"dht/src/structure"
 )
 
 func correct(actual []string, expected []string) bool {
@@ -34,26 +35,32 @@ func correct(actual []string, expected []string) bool {
 
 func TestMemberList(t *testing.T) {
 	events := []struct {
-		status int
+		IsJoined bool
 		node string
 		expected []string
 	}{
-		{status: 0, node:"0.0.0.0:0", expected: []string{"0.0.0.0:0"}},
-		{status: 0, node:"0.0.0.0:0", expected: []string{"0.0.0.0:0"}},
-		{status: 1, node:"0.0.0.0:0", expected: []string{}},
-		{status: 0, node:"1.1.1.1:0", expected: []string{"1.1.1.1:0"}},
-		{status: 0, node:"7.7.7.7:7", expected: []string{"1.1.1.1:0", "7.7.7.7:7"}},
-		{status: 0, node:"1.1.1.1:1", expected: []string{"1.1.1.1:0", "7.7.7.7:7", "1.1.1.1:1"}},
-		{status: 1, node:"1.1.1.1:0", expected: []string{"1.1.1.1:1", "7.7.7.7:7"}},
-		{status: 1, node:"1.1.1.1:1", expected: []string{"7.7.7.7:7"}},
+		{IsJoined: true, node:"0.0.0.0:0", expected: []string{"0.0.0.0:0"}},
+		{IsJoined: true, node:"0.0.0.0:0", expected: []string{"0.0.0.0:0"}},
+		{IsJoined: false, node:"0.0.0.0:0", expected: []string{}},
+		{IsJoined: true, node:"1.1.1.1:0", expected: []string{"1.1.1.1:0"}},
+		{IsJoined: true, node:"7.7.7.7:7", expected: []string{"1.1.1.1:0", "7.7.7.7:7"}},
+		{IsJoined: true, node:"1.1.1.1:1", expected: []string{"1.1.1.1:0", "7.7.7.7:7", "1.1.1.1:1"}},
+		{IsJoined: false, node:"1.1.1.1:0", expected: []string{"1.1.1.1:1", "7.7.7.7:7"}},
+		{IsJoined: false, node:"1.1.1.1:1", expected: []string{"7.7.7.7:7"}},
 	}
 
-	gmsEvents := make(chan coord2rep)
+	gmsEvents := make(chan structure.GMSEventMessage)
 	replicationService := New(gmsEvents)
 	for _, test := range events {
-		name := "Status " + strconv.Itoa(test.status) + ", node: " + test.node
+		var name string
+		if test.IsJoined {
+			name = "Node Join - node: " + test.node
+		} else {
+			name = "Node fail - node: " + test.node
+		}
+
 		t.Run(name, func(t *testing.T) {
-			gmsEvents <- coord2rep{status: test.status, node: test.node}
+			gmsEvents <- structure.GMSEventMessage{IsJoined: test.IsJoined, Node: test.node}
 			time.Sleep(time.Millisecond)
 			if !correct(replicationService.getAllChains(), test.expected) {
 				t.Error("Expected: ", test.expected, ", but got: ", replicationService.getAllChains())
@@ -64,20 +71,20 @@ func TestMemberList(t *testing.T) {
 
 func TestRouting(t *testing.T) {
 	events := []struct {
-		status int
+		IsJoined bool 
 		node string
 	}{
-		{status: 0, node:"0.0.0.0:0"},
-		{status: 0, node:"1.1.1.1:9"},
-		{status: 0, node:"7.7.7.7:7"},
-		{status: 0, node:"1.1.1.1:1"},
+		{IsJoined: true, node:"0.0.0.0:0"},
+		{IsJoined: true, node:"1.1.1.1:9"},
+		{IsJoined: true, node:"7.7.7.7:7"},
+		{IsJoined: true, node:"1.1.1.1:1"},
 	}
 
-	gmsEvents := make(chan coord2rep)
+	gmsEvents := make(chan structure.GMSEventMessage)
 	replicationService := New(gmsEvents)
 
 	for _, event := range events {
-		gmsEvents <- coord2rep{status: event.status, node: event.node}
+		gmsEvents <- structure.GMSEventMessage{IsJoined: event.IsJoined, Node: event.node}
 		time.Sleep(time.Millisecond)
 	}
 
