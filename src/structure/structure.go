@@ -1,6 +1,9 @@
 package structure
 
-type GMSToCoordinatorMessage struct {
-	Status bool
-	Node   string
+// isJoined is true if new node joined/ false => failed
+type GMSEventMessage struct {
+	IsJoined bool
+	Node     string
 }
+
+// TODO: come up with other message types too

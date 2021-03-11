@@ -42,12 +42,12 @@ type membersListValue struct {
 }
 
 type MembershipService struct {
-	address                        string
-	members                        map[string]*membersListValue
-	membersListLock                sync.Mutex
-	transport                      *transport.TransportModule
-	receiveChannel                 chan []byte
-	GMSToCoordinatorMessageChannel chan structure.GMSToCoordinatorMessage
+	address                string
+	members                map[string]*membersListValue
+	membersListLock        sync.Mutex
+	transport              *transport.TransportModule
+	receiveChannel         chan []byte
+	GMSEventMessageChannel chan structure.GMSEventMessage
 }
 
 // New creates a new instance of the GroupMembershipService which manages the set of members in the service.
@@ -69,7 +69,7 @@ func New(
 	receiveChannel chan []byte,
 	myAddress string,
 	myPort string,
-	GMSToCoordinatorMessageChannel chan structure.GMSToCoordinatorMessage) (*MembershipService, error) {
+	GMSEventMessageChannel chan structure.GMSEventMessage) (*MembershipService, error) {
 
 	gms := new(MembershipService)
 	gms.transport = transport
@@ -95,7 +95,7 @@ func New(
 	gms.members[gms.address] = createNewMembersListValue() // add itself to the membership
 	gms.members[gms.address].isAlive = true
 	gms.membersListLock.Unlock()
-	gms.GMSToCoordinatorMessageChannel = GMSToCoordinatorMessageChannel
+	gms.GMSEventMessageChannel = GMSEventMessageChannel
 
 	// begin a thread for listening to the receive channel and processing messages
 	go gms.listenToReceiveChannel()
@@ -138,11 +138,11 @@ func (gms *MembershipService) cleanupCheck() {
 			if !element.isAlive && element.heartbeatTimestamp < getCurrentTimeInMilliSec()-TimeCleanup {
 				delete(gms.members, member)
 
-				msg := structure.GMSToCoordinatorMessage{
-					Status: false,
-					Node:   member,
+				msg := structure.GMSEventMessage{
+					IsJoined: false,
+					Node:     member,
 				}
-				gms.GMSToCoordinatorMessageChannel <- msg
+				gms.GMSEventMessageChannel <- msg
 			}
 		}
 		gms.membersListLock.Unlock()
@@ -310,11 +310,11 @@ func (gms *MembershipService) processSendJoinRequest(request *protobuf.Membershi
 
 	gms.transport.SendHeartbeat(payload, generateMessageID(), destination)
 
-	msg := structure.GMSToCoordinatorMessage{
-		Status: true,
-		Node:   destination,
+	msg := structure.GMSEventMessage{
+		IsJoined: true,
+		Node:     destination,
 	}
-	gms.GMSToCoordinatorMessageChannel <- msg
+	gms.GMSEventMessageChannel <- msg
 
 	return nil
 }

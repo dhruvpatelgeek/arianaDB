@@ -28,7 +28,7 @@ func main() {
 	// construct channels to communicate between transport layer and application layer
 	storageChannel := make(chan protobuf.InternalMsg, 2)
 	gmsChannel := make(chan []byte, 2)
-	GMSToCordinator := make(chan structure.GMSToCoordinatorMessage)
+	gmsToCordinatorChannel := make(chan structure.GMSEventMessage)
 
 	// get info about self
 	containerHostname := getOutboundIP().String()
@@ -43,7 +43,7 @@ func main() {
 	go transport.Init_server()
 
 	// initialize group membership service
-	gms, err := membership.New(initialMembers, transport, gmsChannel, containerHostname, port, GMSToCordinator)
+	gms, err := membership.New(initialMembers, transport, gmsChannel, containerHostname, port, gmsToCordinatorChannel)
 	if err != nil {
 		log.Fatal("Failed to initialize GMS.", err)
 		panic("Error when creating gms. Abort creating server.")
