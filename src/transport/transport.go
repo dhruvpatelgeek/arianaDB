@@ -107,17 +107,20 @@ func New(ip string, port int, gmsChan chan []byte, StorageChan chan protobuf.Int
 // send function for sending a payload
 func (tm *TransportModule) Send(payload []byte, messageID []byte, destAddr string) {
 	message, err := generateShell(payload, messageID)
+
 	if err != nil {
 		fmt.Println("payload gen failed")
 	}
 
 	msg := &protobuf.Msg{}
 	error := proto.Unmarshal(message, msg)
+
 	if error != nil {
 		log.Println("Unable to deserialize ", error)
 	}
 
 	addr, err := net.ResolveUDPAddr("udp", destAddr)
+
 	if err != nil {
 		log.Println("Address error ", err)
 	}
@@ -128,7 +131,6 @@ func (tm *TransportModule) Send(payload []byte, messageID []byte, destAddr strin
 //------------------------------------------
 
 //optimizations----------------------------
-
 // auto scaling collector that adjusts its collection rate wrt how much memory it has left
 // like a P controller in control systems engineering
 // the proportionalCollector will increase the number of GC calls when the memory is low

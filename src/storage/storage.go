@@ -80,6 +80,7 @@ func (sm *StorageModule) runModule(tm *transport.TransportModule, coordinatorMes
 		req := <-coordinatorMessage
 		response := sm.message_handler(req.Payload)
 		tm.ResSend(response, string(req.Message), req.ClientAddr)
+
 	}
 }
 

@@ -10,7 +10,6 @@ import (
 	"sync"
 
 	"dht/src/structure"
-	"dht/src/transport"
 )
 
 const LESS = -1
@@ -86,7 +85,7 @@ func (rs *ReplicationService) getAllChains() []string {
 // @return string - Location of node responsible for the given key
 func (rs *ReplicationService) GetNextNode(key []byte) string {
 	if len(key) == 0 {
-		return transport.GetLocalAddr()
+		return rs.hostIPv4 // TODO:
 	}
 
 	keyHashInt := hashInt(hex.EncodeToString(key))
