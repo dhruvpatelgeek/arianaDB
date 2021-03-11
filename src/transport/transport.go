@@ -602,12 +602,24 @@ func (tm *TransportModule) S2S_route_to_coodinator(payload []byte) {
 	tm.coodinatorChan <- *node2nodeMsg
 }
 
-func (tm *TransportModule) SendCoordinatorToCoordinator(payload []byte, destAddr string) {
+func (tm *TransportModule) SendCoordinatorToCoordinator(payload []byte, messageID []byte, destAddr string) {
+	message, err := generateShell(payload, messageID)
+	if err != nil {
+		fmt.Println("payload gen failed")
+	}
+
+	msg := &protobuf.Msg{}
+	error := proto.Unmarshal(message, msg)
+	if error != nil {
+		log.Println("Unable to deserialize ", error)
+	}
+
 	addr, err := net.ResolveUDPAddr("udp", destAddr)
 	if err != nil {
 		log.Println("Address error ", err)
 	}
-	tm.connection.WriteToUDP(payload, addr)
+
+	tm.connection.WriteToUDP(message, addr)
 }
 
 // TODO: sendHeartbeat(destination, payload) UDP
