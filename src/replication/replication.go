@@ -9,6 +9,7 @@ import (
 	"math/big"
 	"sync"
 
+	"dht/src/membership"
 	"dht/src/structure"
 )
 
@@ -23,14 +24,18 @@ type ReplicationService struct {
 	hostIP   string
 	hostPort string
 	hostIPv4 string
+
+	gms *membership.MembershipService
 }
 
-func New(gmsEvents <-chan structure.GMSEventMessage, hostIP string, hostPort string) *ReplicationService {
+func New(gmsEvents <-chan structure.GMSEventMessage, hostIP string, hostPort string, gms *membership.MembershipService) *ReplicationService {
 	rs := &ReplicationService{chains: make(map[string]int), chainsLock: &sync.Mutex{}}
 
 	rs.hostIP = hostIP
 	rs.hostPort = hostPort
 	rs.hostIPv4 = hostIP + ":" + hostPort
+
+	rs.gms = gms
 
 	go rs.runService(gmsEvents)
 
@@ -84,13 +89,14 @@ func (rs *ReplicationService) getAllChains() []string {
 // @param key
 // @return string - Location of node responsible for the given key
 func (rs *ReplicationService) GetNextNode(key []byte) string {
+	// TODO: for the same key, this is giving different results
 	if len(key) == 0 {
-		return rs.hostIPv4 // TODO:
+		return rs.hostIPv4
 	}
 
 	keyHashInt := hashInt(hex.EncodeToString(key))
 
-	nodeList := rs.getAllChains()
+	nodeList := rs.gms.GetAllNodes()
 
 	responsibleNode := nodeList[0]
 	diff := hashDifference(keyHashInt, hashInt(responsibleNode))

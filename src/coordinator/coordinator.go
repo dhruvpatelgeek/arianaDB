@@ -119,7 +119,6 @@ func (coordinator *CoordinatorService) processIncomingMessages() {
 		if selfIP := coordinator.hostIPv4; destination == selfIP {
 			coordinator.toStorageChannel <- incomingMessage
 		} else {
-			incomingMessage.OriginAddr = coordinator.hostIPv4
 			marshalledIncomingMessage, err := proto.Marshal(&incomingMessage)
 			if err != nil {
 				fmt.Println("Failed to marshal IncomingMsg in CoordinatorService for forwarding. Ignoring this message.", err)
