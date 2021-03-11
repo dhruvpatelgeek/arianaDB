@@ -131,9 +131,9 @@ func (coordinator *CoordinatorService) processIncomingMessages() {
 }
 
 func (coordinator *CoordinatorService) processGMSEvent() {
-	// TODO: 1. Figure out
 	for {
 		gmsEventMessage := <-coordinator.gmsEventChannel
-		fmt.Println(gmsEventMessage)
+		fmt.Println("Coordinator received GMS event: ", gmsEventMessage)
+		coordinator.toReplicationChannel <- gmsEventMessage
 	}
 }

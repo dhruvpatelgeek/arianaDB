@@ -3,12 +3,14 @@ package replication
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"fmt"
+
 	//"log"
 	"math/big"
 	"sync"
 
-	"dht/src/transport"
 	"dht/src/structure"
+	"dht/src/transport"
 )
 
 const LESS = -1
@@ -16,25 +18,39 @@ const EQUAL = 0
 const GREATER = 1
 
 type ReplicationService struct {
-	chains map[string]int
+	chains     map[string]int
 	chainsLock *sync.Mutex
+
+	hostIP   string
+	hostPort string
+	hostIPv4 string
 }
 
-func New(gmsEvents <-chan structure.GMSEventMessage) (*ReplicationService) {
+func New(gmsEvents <-chan structure.GMSEventMessage, hostIP string, hostPort string) *ReplicationService {
 	rs := &ReplicationService{chains: make(map[string]int), chainsLock: &sync.Mutex{}}
+
+	rs.hostIP = hostIP
+	rs.hostPort = hostPort
+	rs.hostIPv4 = hostIP + ":" + hostPort
+
 	go rs.runService(gmsEvents)
 
 	return rs
 }
 
 func (rs *ReplicationService) runService(gmsEvents <-chan structure.GMSEventMessage) {
+	rs.addHead(rs.hostIPv4)
+
 	for {
 		event := <-gmsEvents
+		fmt.Println("Replication received GMS event: ", event)
+
 		if event.IsJoined {
 			rs.addHead(event.Node)
 		} else {
 			rs.removeHead(event.Node)
 		}
+		fmt.Println("All chains: ", rs.getAllChains())
 	}
 }
 
@@ -94,7 +110,7 @@ func (rs *ReplicationService) GetNextNode(key []byte) string {
 
 // @Description: Computes the numerical difference between
 // the key's hash and the node's hash
-// @param key 
+// @param key
 // @param node
 // @return *big.Int
 func hashDifference(key *big.Int, node *big.Int) *big.Int {
@@ -120,7 +136,7 @@ func hashDifference(key *big.Int, node *big.Int) *big.Int {
 }
 
 // @Description: returns the key's hash value as a big int
-// @param key 
+// @param key
 // @return *big.Int - Hash digest
 func hashInt(key string) *big.Int {
 	keyHash := hash(key)
@@ -129,7 +145,7 @@ func hashInt(key string) *big.Int {
 }
 
 // @Description: returns the input string's sha256 digest
-// @param str 
+// @param str
 // @return []byte - SHA256 digest
 func hash(str string) []byte {
 	digest := sha256.Sum256([]byte(str))

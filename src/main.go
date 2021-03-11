@@ -49,17 +49,17 @@ func main() {
 	go transport.Init_server()
 
 	// initialize group membership service
-	gms, err := membership.New(initialMembers, transport, gmsChannel, containerHostname, port, gmsToCoordinatorChannel)
+	_, err = membership.New(initialMembers, transport, gmsChannel, containerHostname, port, gmsToCoordinatorChannel)
 	if err != nil {
 		log.Fatal("Failed to initialize GMS.", err)
 		panic("Error when creating gms. Abort creating server.")
 	}
 
 	// initialize storage service
-	storage.New(transport, coordinatorToStorageChannel, gms)
+	storage.New(transport, coordinatorToStorageChannel)
 
 	// initialize replicationService
-	replicationService := replication.New(coordinatorToReplicationChannel)
+	replicationService := replication.New(coordinatorToReplicationChannel, containerHostname, port)
 
 	// initialize coordinator service
 	_, err = coordinator.New(gmsToCoordinatorChannel, transportToCoordinatorChannel, coordinatorToStorageChannel, coordinatorToReplicationChannel,
