@@ -2,9 +2,12 @@ package coordinator
 
 import (
 	"dht/google_protocol_buffer/pb/protobuf"
+	"dht/src/replication"
 	"dht/src/structure"
 	"dht/src/transport"
 	"fmt"
+
+	"google.golang.org/protobuf/proto"
 )
 
 /** TODO: refactor storage and coordinator so that:
@@ -34,62 +37,103 @@ type CoordinatorService struct {
 	TODO: function calls
 	1. transport: yes
 		- for re-routing to the correct head node in the system (SendCoordinatorToCoordinator)
-	2.
-	*/
-	gmsToCoordinatorChannel         chan structure.GMSEventMessage
-	transportToCoordinatorChannel   chan protobuf.InternalMsg
-	coordinatorToStorageChannel     chan protobuf.InternalMsg
-	coordinatorToReplicationChannel chan int
 
-	transport *transport.TransportModule
+
+		TODO:
+		1. put,get,remove,wipeout
+		2. shutdown, isalive, getprocessid, getMembershipcount (TODO: not storage related)
+			- shutdown: coordinator?
+			- isAlive: coordinator
+			- getProcessID: coordinator
+			- getMembershipCount: gms
+	*/
+	gmsEventChannel         chan structure.GMSEventMessage
+	incomingMessagesChannel chan protobuf.InternalMsg
+	toStorageChannel        chan protobuf.InternalMsg
+	toReplicationChannel    chan structure.GMSEventMessage
+
+	transport          *transport.TransportModule
+	replicationService *replication.ReplicationService
+
+	hostIP   string
+	hostPort string
+	hostIPv4 string
 }
 
 func New(
 	gmsToCoordinatorChannel chan structure.GMSEventMessage,
 	transportToCoordinatorChannel chan protobuf.InternalMsg,
 	coordinatorToStorageChannel chan protobuf.InternalMsg,
-	coordinatorToReplicationChannel chan int,
+	coordinatorToReplicationChannel chan structure.GMSEventMessage,
 
-	transport *transport.TransportModule) (*CoordinatorService, error) {
+	transport *transport.TransportModule,
+	replicationService *replication.ReplicationService,
+
+	hostIP string,
+	hostPort string) (*CoordinatorService, error) {
 
 	coordinator := new(CoordinatorService)
-	coordinator.gmsToCoordinatorChannel = gmsToCoordinatorChannel
-	coordinator.transportToCoordinatorChannel = transportToCoordinatorChannel
-	coordinator.coordinatorToStorageChannel = coordinatorToStorageChannel
-	coordinator.coordinatorToReplicationChannel = coordinatorToReplicationChannel
+	coordinator.gmsEventChannel = gmsToCoordinatorChannel
+	coordinator.incomingMessagesChannel = transportToCoordinatorChannel
+	coordinator.toStorageChannel = coordinatorToStorageChannel
+	coordinator.toReplicationChannel = coordinatorToReplicationChannel
 
 	coordinator.transport = transport
+	coordinator.replicationService = replicationService
 
-	// TODO: bootstrap worker threads
+	coordinator.hostIP = hostIP
+	coordinator.hostPort = hostPort
+	coordinator.hostIPv4 = hostIP + ":" + hostPort
+
+	// bootstrap worker threads for processing incoming messages & gms events
 	go coordinator.processIncomingMessages()
 	go coordinator.processGMSEvent()
 
 	return coordinator, nil
 }
 
-/** TODO: refactor functionality:
-- process incoming messages in the TransportToCoordinator channel
-	- by asking ReplicationService, determine whether to commit or forward
-		- TODO: note that in the replication propagation, Coordinator may have to commit AND forward
-		- commit bool: if true, process here
-		- forward bool: if true, forward to next client
-- process join/fail events:
-	- TODO: this is for later
-	- for now, we should just create a process which will dequeue the message off the channel
-	- and repeat forever
+/**	TODO:
+1. get a message from the transport layer
+2. get the key from KVRequest by unmarshaling the InternalMsg.payload
+3. ask replication service what to do with the message (commit/forward) -> return ip of where to return
+4. if ip == self, then
+	- send message to storage (InternalMsg)
+5. otherwise,
+	- re-route to new destination
 */
-func (cor *CoordinatorService) processIncomingMessages() {
+func (coordinator *CoordinatorService) processIncomingMessages() {
 	for {
-		incomingMessage := <-cor.transportToCoordinatorChannel
+		// retrieve incoming message
+		incomingMessage := <-coordinator.incomingMessagesChannel
+		kvRequest := &protobuf.KVRequest{}
+		err := proto.Unmarshal(incomingMessage.Payload, kvRequest)
+		if err != nil {
+			fmt.Println("Failed to unmarshal the KVRequest in incomingMessage.payload in CoordinatorService. Ignoring this message.", err)
+			continue
+		}
 
-		fmt.Println(incomingMessage)
+		// ask replicationService which node should handle this message.
+		destination := coordinator.replicationService.GetNextNode(kvRequest.Key)
+
+		// process message locally or forward
+		if selfIP := coordinator.hostIPv4; destination == selfIP {
+			coordinator.toStorageChannel <- incomingMessage
+		} else {
+			marshalledIncomingMessage, err := proto.Marshal(&incomingMessage)
+			if err != nil {
+				fmt.Println("Failed to marshal IncomingMsg in CoordinatorService for forwarding. Ignoring this message.", err)
+				continue
+			}
+
+			coordinator.transport.SendCoordinatorToCoordinator(marshalledIncomingMessage, destination)
+		}
 	}
 }
 
-func (cor *CoordinatorService) processGMSEvent() {
+func (coordinator *CoordinatorService) processGMSEvent() {
 	// TODO: 1. Figure out
 	for {
-		gmsEventMessage := <-cor.gmsToCoordinatorChannel
+		gmsEventMessage := <-coordinator.gmsEventChannel
 		fmt.Println(gmsEventMessage)
 	}
 }

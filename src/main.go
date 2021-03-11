@@ -5,6 +5,7 @@ import (
 	"dht/google_protocol_buffer/pb/protobuf"
 	"dht/src/coordinator"
 	"dht/src/membership"
+	"dht/src/replication"
 	"dht/src/storage"
 	"dht/src/structure"
 	"dht/src/transport"
@@ -33,7 +34,7 @@ func main() {
 	gmsToCoordinatorChannel := make(chan structure.GMSEventMessage)
 	transportToCoordinatorChannel := make(chan protobuf.InternalMsg, 2)
 	coordinatorToStorageChannel := make(chan protobuf.InternalMsg, 2)
-	coordinatorToReplicationChannel := make(chan int)
+	coordinatorToReplicationChannel := make(chan structure.GMSEventMessage)
 
 	// get info about self
 	containerHostname := getOutboundIP().String()
@@ -57,25 +58,17 @@ func main() {
 	// initialize storage service
 	storage.New(transport, coordinatorToStorageChannel, gms)
 
+	// initialize replicationService
+	replicationService := replication.New(coordinatorToReplicationChannel)
+
 	// initialize coordinator service
-	_, err = coordinator.New(gmsToCoordinatorChannel, transportToCoordinatorChannel, coordinatorToStorageChannel, coordinatorToReplicationChannel, transport)
+	_, err = coordinator.New(gmsToCoordinatorChannel, transportToCoordinatorChannel, coordinatorToStorageChannel, coordinatorToReplicationChannel,
+		transport, replicationService,
+		containerHostname, port)
 	if err != nil {
 		log.Fatal("Failed to initialize CoordinatorService", err)
 		panic("Error when creating coordinator. Abort node initialization")
 	}
-	// go func() {
-	// 	for {
-	// 		time.Sleep(5000 * time.Millisecond)
-	// 		fmt.Println(gms.GetAllNodes())
-	// 	}
-	// }()
-
-	// go func() {
-	// 	for {
-	// 		notification := <-GMSToCordinator
-	// 		fmt.Println(notification)
-	// 	}
-	// }()
 
 	// block main thread from ending and closing application
 	doneChan := make(chan error, 1)
