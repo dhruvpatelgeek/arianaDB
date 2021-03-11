@@ -42,12 +42,12 @@ type membersListValue struct {
 }
 
 type MembershipService struct {
-	address                string
-	members                map[string]*membersListValue
-	membersListLock        sync.Mutex
-	transport              *transport.TransportModule
-	receiveChannel         chan []byte
-	GMSToCordinatorChannel chan structure.GMSToCordinator
+	address                        string
+	members                        map[string]*membersListValue
+	membersListLock                sync.Mutex
+	transport                      *transport.TransportModule
+	receiveChannel                 chan []byte
+	GMSToCoordinatorMessageChannel chan structure.GMSToCoordinatorMessage
 }
 
 // New creates a new instance of the GroupMembershipService which manages the set of members in the service.
@@ -69,7 +69,7 @@ func New(
 	receiveChannel chan []byte,
 	myAddress string,
 	myPort string,
-	GMSToCordinatorChannel chan structure.GMSToCordinator) (*MembershipService, error) {
+	GMSToCoordinatorMessageChannel chan structure.GMSToCoordinatorMessage) (*MembershipService, error) {
 
 	gms := new(MembershipService)
 	gms.transport = transport
@@ -95,7 +95,7 @@ func New(
 	gms.members[gms.address] = createNewMembersListValue() // add itself to the membership
 	gms.members[gms.address].isAlive = true
 	gms.membersListLock.Unlock()
-	gms.GMSToCordinatorChannel = GMSToCordinatorChannel
+	gms.GMSToCoordinatorMessageChannel = GMSToCoordinatorMessageChannel
 
 	// begin a thread for listening to the receive channel and processing messages
 	go gms.listenToReceiveChannel()
@@ -138,11 +138,11 @@ func (gms *MembershipService) cleanupCheck() {
 			if !element.isAlive && element.heartbeatTimestamp < getCurrentTimeInMilliSec()-TimeCleanup {
 				delete(gms.members, member)
 
-				msg := structure.GMSToCordinator{
+				msg := structure.GMSToCoordinatorMessage{
 					Status: false,
 					Node:   member,
 				}
-				gms.GMSToCordinatorChannel <- msg
+				gms.GMSToCoordinatorMessageChannel <- msg
 			}
 		}
 		gms.membersListLock.Unlock()
@@ -310,11 +310,11 @@ func (gms *MembershipService) processSendJoinRequest(request *protobuf.Membershi
 
 	gms.transport.SendHeartbeat(payload, generateMessageID(), destination)
 
-	msg := structure.GMSToCordinator{
+	msg := structure.GMSToCoordinatorMessage{
 		Status: true,
 		Node:   destination,
 	}
-	gms.GMSToCordinatorChannel <- msg
+	gms.GMSToCoordinatorMessageChannel <- msg
 
 	return nil
 }

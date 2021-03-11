@@ -1,6 +1,6 @@
 package structure
 
-type GMSToCordinator struct {
+type GMSToCoordinatorMessage struct {
 	Status bool
 	Node   string
 }

@@ -18,6 +18,10 @@ import (
 	"github.com/golang/protobuf/proto"
 )
 
+/** TODO: refactor list
+- remove the routing and process the incoming requests directly & send response
+*/
+
 //REFRENCES--------------------------------
 //https://stackoverflow.com/questions/28400340/how-support-concurrent-connections-with-a-udp-server-using-go
 //https://stackoverflow.com/questions/27625787/measuring-memory-usage-of-executable-run-using-golang

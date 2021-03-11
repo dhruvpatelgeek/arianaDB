@@ -28,7 +28,7 @@ func main() {
 	// construct channels to communicate between transport layer and application layer
 	storageChannel := make(chan protobuf.InternalMsg, 2)
 	gmsChannel := make(chan []byte, 2)
-	GMSToCordinator := make(chan structure.GMSToCordinator)
+	GMSToCordinator := make(chan structure.GMSToCoordinatorMessage)
 
 	// get info about self
 	containerHostname := getOutboundIP().String()
