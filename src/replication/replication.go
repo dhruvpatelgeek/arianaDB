@@ -8,40 +8,32 @@ import (
 	"sync"
 
 	"dht/src/transport"
+	"dht/src/structure"
 )
 
 const LESS = -1
 const EQUAL = 0
 const GREATER = 1
 
-// ******************
-// JUST FOR DEBUGGING
-type coord2rep struct {
-	status int
-	node string
-}
-// ******************
-
-
 type ReplicationService struct {
 	chains map[string]int
 	chainsLock *sync.Mutex
 }
 
-func New(gmsEvents <-chan coord2rep) (*ReplicationService) {
+func New(gmsEvents <-chan structure.GMSEventMessage) (*ReplicationService) {
 	rs := &ReplicationService{chains: make(map[string]int), chainsLock: &sync.Mutex{}}
 	go rs.runService(gmsEvents)
 
 	return rs
 }
 
-func (rs *ReplicationService) runService(gmsEvents <-chan coord2rep) {
+func (rs *ReplicationService) runService(gmsEvents <-chan structure.GMSEventMessage) {
 	for {
 		event := <-gmsEvents
-		if event.status == 0 {
-			rs.addHead(event.node)
+		if event.IsJoined {
+			rs.addHead(event.Node)
 		} else {
-			rs.removeHead(event.node)
+			rs.removeHead(event.Node)
 		}
 	}
 }
