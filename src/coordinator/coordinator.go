@@ -1,5 +1,12 @@
 package coordinator
 
+import (
+	"dht/google_protocol_buffer/pb/protobuf"
+	"dht/src/structure"
+	"dht/src/transport"
+	"fmt"
+)
+
 /** TODO: refactor storage and coordinator so that:
 1. storage is exclusively for committing to KVStore & responding to client
 2. coordinator makes the decision to route to different nodes.
@@ -27,11 +34,37 @@ type CoordinatorService struct {
 	TODO: function calls
 	1. transport: yes
 		- for re-routing to the correct head node in the system (SendCoordinatorToCoordinator)
+	2.
 	*/
+	gmsToCoordinatorChannel         chan structure.GMSEventMessage
+	transportToCoordinatorChannel   chan protobuf.InternalMsg
+	coordinatorToStorageChannel     chan protobuf.InternalMsg
+	coordinatorToReplicationChannel chan int
+
+	transport *transport.TransportModule
 }
 
-func New() {
-	// TODO:
+func New(
+	gmsToCoordinatorChannel chan structure.GMSEventMessage,
+	transportToCoordinatorChannel chan protobuf.InternalMsg,
+	coordinatorToStorageChannel chan protobuf.InternalMsg,
+	coordinatorToReplicationChannel chan int,
+
+	transport *transport.TransportModule) (*CoordinatorService, error) {
+
+	coordinator := new(CoordinatorService)
+	coordinator.gmsToCoordinatorChannel = gmsToCoordinatorChannel
+	coordinator.transportToCoordinatorChannel = transportToCoordinatorChannel
+	coordinator.coordinatorToStorageChannel = coordinatorToStorageChannel
+	coordinator.coordinatorToReplicationChannel = coordinatorToReplicationChannel
+
+	coordinator.transport = transport
+
+	// TODO: bootstrap worker threads
+	go coordinator.processIncomingMessages()
+	go coordinator.processGMSEvent()
+
+	return coordinator, nil
 }
 
 /** TODO: refactor functionality:
@@ -41,5 +74,22 @@ func New() {
 		- commit bool: if true, process here
 		- forward bool: if true, forward to next client
 - process join/fail events:
-	-
+	- TODO: this is for later
+	- for now, we should just create a process which will dequeue the message off the channel
+	- and repeat forever
 */
+func (cor *CoordinatorService) processIncomingMessages() {
+	for {
+		incomingMessage := <-cor.transportToCoordinatorChannel
+
+		fmt.Println(incomingMessage)
+	}
+}
+
+func (cor *CoordinatorService) processGMSEvent() {
+	// TODO: 1. Figure out
+	for {
+		gmsEventMessage := <-cor.gmsToCoordinatorChannel
+		fmt.Println(gmsEventMessage)
+	}
+}

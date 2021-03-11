@@ -3,6 +3,7 @@ package main
 import (
 	"bufio"
 	"dht/google_protocol_buffer/pb/protobuf"
+	"dht/src/coordinator"
 	"dht/src/membership"
 	"dht/src/storage"
 	"dht/src/structure"
@@ -26,16 +27,20 @@ func main() {
 	}
 
 	// construct channels to communicate between transport layer and application layer
-	storageChannel := make(chan protobuf.InternalMsg, 2)
 	gmsChannel := make(chan []byte, 2)
-	gmsToCordinatorChannel := make(chan structure.GMSEventMessage)
+
+	// construct channels for intra-node service communication
+	gmsToCoordinatorChannel := make(chan structure.GMSEventMessage)
+	transportToCoordinatorChannel := make(chan protobuf.InternalMsg, 2)
+	coordinatorToStorageChannel := make(chan protobuf.InternalMsg, 2)
+	coordinatorToReplicationChannel := make(chan int)
 
 	// get info about self
 	containerHostname := getOutboundIP().String()
 
 	// initialize transport layer
 	portInt, _ := strconv.Atoi(port)
-	transport, err := transport.New(containerHostname, portInt, gmsChannel, storageChannel)
+	transport, err := transport.New(containerHostname, portInt, gmsChannel, transportToCoordinatorChannel)
 	if err != nil {
 		log.Fatal("Failed to initialize transport layer.", err)
 		panic("Error when creating transport layer. Abort creating server.")
@@ -43,15 +48,21 @@ func main() {
 	go transport.Init_server()
 
 	// initialize group membership service
-	gms, err := membership.New(initialMembers, transport, gmsChannel, containerHostname, port, gmsToCordinatorChannel)
+	gms, err := membership.New(initialMembers, transport, gmsChannel, containerHostname, port, gmsToCoordinatorChannel)
 	if err != nil {
 		log.Fatal("Failed to initialize GMS.", err)
 		panic("Error when creating gms. Abort creating server.")
 	}
 
 	// initialize storage service
-	storage.New(transport, storageChannel, gms)
+	storage.New(transport, coordinatorToStorageChannel, gms)
 
+	// initialize coordinator service
+	_, err = coordinator.New(gmsToCoordinatorChannel, transportToCoordinatorChannel, coordinatorToStorageChannel, coordinatorToReplicationChannel, transport)
+	if err != nil {
+		log.Fatal("Failed to initialize CoordinatorService", err)
+		panic("Error when creating coordinator. Abort node initialization")
+	}
 	// go func() {
 	// 	for {
 	// 		time.Sleep(5000 * time.Millisecond)
