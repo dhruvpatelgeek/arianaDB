@@ -2,6 +2,7 @@ package transport
 
 import (
 	"dht/google_protocol_buffer/pb/protobuf"
+	"dht/src/constants"
 	"fmt"
 	"hash/crc32"
 	"log"
@@ -420,6 +421,7 @@ func (tm *TransportModule) clientReq(payload []byte, messageID []byte, clientAdd
 			ClientAddress: &clientAddr,
 			KVRequest:     payload,
 			MessageID:     messageID,
+			Command:       uint32(constants.ProcessKVRequest), // TODO: unable
 		}
 
 		tm.coodinatorChan <- internal_message_obj

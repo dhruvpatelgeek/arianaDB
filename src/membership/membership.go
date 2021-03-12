@@ -14,7 +14,6 @@ import (
 	"time"
 
 	"github.com/golang/protobuf/proto"
-	"github.com/google/uuid"
 )
 
 // Number of nodes to gossip during every heartbeat Period
@@ -233,7 +232,7 @@ func (gms *MembershipService) bootstrap(initialMembers []string) {
 
 			marshalledJoinRequest, err := proto.Marshal(joinRequest)
 			if err == nil {
-				gms.transport.SendHeartbeat(marshalledJoinRequest, generateMessageID(), address)
+				gms.transport.SendHeartbeat(marshalledJoinRequest, structure.GenerateMessageID(), address)
 			} else {
 				fmt.Println(err)
 			}
@@ -308,7 +307,7 @@ func (gms *MembershipService) processSendJoinRequest(request *protobuf.Membershi
 		return err
 	}
 
-	gms.transport.SendHeartbeat(payload, generateMessageID(), destination)
+	gms.transport.SendHeartbeat(payload, structure.GenerateMessageID(), destination)
 
 	msg := structure.GMSEventMessage{
 		IsJoined: true,
@@ -326,7 +325,7 @@ func (gms *MembershipService) sendList(destination string) {
 		return
 	}
 
-	gms.transport.SendHeartbeat(payload, generateMessageID(), destination)
+	gms.transport.SendHeartbeat(payload, structure.GenerateMessageID(), destination)
 }
 
 //GetAllNodes () return all membership lists as an array of string
@@ -344,12 +343,6 @@ func (gms *MembershipService) GetAllNodes() []string {
 	return allNodes
 }
 
-// generate messageID
-func generateMessageID() []byte {
-	id := uuid.New().String()
-
-	return []byte("gossip" + id)
-}
 
 // marshal membershipRequest
 func (gms *MembershipService) marshalMembershipRequest(command uint32, list []string) (bool, []byte) {

@@ -9,6 +9,7 @@ import (
 	"sync"
 	"syscall"
 
+	"dht/src/constants"
 	"dht/src/transport"
 
 	"github.com/golang/protobuf/proto"
@@ -52,6 +53,7 @@ const INV_VAL = 7
 type StorageModule struct {
 	kvStore map[string][]byte
 	kvsLock *sync.Mutex
+	tm      *transport.TransportModule
 }
 
 // @Description: Initializes a new storage module
@@ -64,9 +66,9 @@ func New(tm *transport.TransportModule, coordinatorMessage chan protobuf.Interna
 	sm := StorageModule{
 		kvStore: make(map[string][]byte),
 		kvsLock: &sync.Mutex{},
+		tm:      tm,
 	}
-
-	go sm.runModule(tm, coordinatorMessage)
+	go sm.runModule(coordinatorMessage)
 
 	return &sm
 }
@@ -75,23 +77,38 @@ func New(tm *transport.TransportModule, coordinatorMessage chan protobuf.Interna
 // @param tm - transport module that sends requests to the storage module
 // @param reqFrom_tm - channel that transport module send requests on
 // @param gms - group membership service that gives the nodes in the network
-func (sm *StorageModule) runModule(tm *transport.TransportModule, coordinatorMessage chan protobuf.InternalMsg) {
+func (sm *StorageModule) runModule(coordinatorMessage chan protobuf.InternalMsg) {
 	for {
-		req := <-coordinatorMessage
-		response := sm.message_handler(req.KVRequest)
-		tm.ResSend(response, string(req.MessageID), *req.ClientAddress)
-
+		request := <-coordinatorMessage
+		command := request.GetCommand()
+		switch constants.InternalMessageCommands(command) {
+		case constants.ProcessKVRequest:
+			err := sm.processKVRequest(request)
+			if err != nil {
+				fmt.Errorf("", err)
+			}
+		case constants.ProcessKeyMigrationRequest:
+			fmt.Println("Received ProcessKeyMigrationRequest command in storage")
+			err := sm.processKeyMigrationRequest(request)
+			if err != nil {
+				fmt.Errorf("", err)
+			}
+		case constants.ProcessTableMigrationRequest:
+			fmt.Println("Received ProcessTableMigrationRequest command in storage")
+		default:
+			fmt.Printf("Storage: Received unrecognized command (%d) from Coordinator", command)
+		}
 	}
 }
 
 // @Description: peals the seconday message layer and performs server functions returns the genarated payload
 // @param message
 // @return []byte
-func (sm *StorageModule) message_handler(message []byte) []byte {
+func (sm *StorageModule) processKVRequest(request protobuf.InternalMsg) error {
 	cast_req := &protobuf.KVRequest{}
-	error := proto.Unmarshal(message, cast_req)
-	if error != nil {
-		fmt.Printf("\nUNPACK ERROR %+v\n", error)
+	err := proto.Unmarshal(request.KVRequest, cast_req)
+	if err != nil {
+		return err
 	}
 
 	var errCode uint32
@@ -129,12 +146,15 @@ func (sm *StorageModule) message_handler(message []byte) []byte {
 		Pid:     &pid,
 	}
 
-	serialResponse, err := proto.Marshal(kvres)
+	kvResponse, err := proto.Marshal(kvres)
 	if err != nil {
 		log.Println("Marshalling error ", err)
 	}
 
-	return serialResponse
+	messageID := request.GetMessageID()
+	clientAddress := request.GetClientAddress()
+	sm.tm.ResSend(kvResponse, string(messageID), clientAddress)
+	return nil
 }
 
 // @Description:Puts some value (and corresponding version)
@@ -209,6 +229,17 @@ func (sm *StorageModule) wipeout() uint32 {
 	sm.kvsLock.Unlock()
 
 	return OK
+}
+
+func (sm *StorageModule) processKeyMigrationRequest(request protobuf.InternalMsg) error {
+	// TODO: process key migration request
+	// extract lowerbound, upperbound, destination address & convert to appropriate
+	//destination := request.GetMigrationDestinationAddress()
+	//lowerbound := request.GetMigrationRangeLowerbound()
+	//upperbound := request.GetMigrationRangeUpperbound()
+
+	// check if wrap around
+	return nil
 }
 
 // @Description: response indicating server is alive

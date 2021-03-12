@@ -1,16 +1,11 @@
 package replication
 
 import (
-	"crypto/sha256"
-	"encoding/hex"
-	"fmt"
 
 	//"log"
-	"math/big"
-	"sync"
-
 	"dht/src/membership"
 	"dht/src/structure"
+	"math/big"
 )
 
 const LESS = -1
@@ -18,9 +13,6 @@ const EQUAL = 0
 const GREATER = 1
 
 type ReplicationService struct {
-	chains     map[string]int
-	chainsLock *sync.Mutex
-
 	hostIP   string
 	hostPort string
 	hostIPv4 string
@@ -28,8 +20,8 @@ type ReplicationService struct {
 	gms *membership.MembershipService
 }
 
-func New(gmsEvents <-chan structure.GMSEventMessage, hostIP string, hostPort string, gms *membership.MembershipService) *ReplicationService {
-	rs := &ReplicationService{chains: make(map[string]int), chainsLock: &sync.Mutex{}}
+func New(hostIP string, hostPort string, gms *membership.MembershipService) *ReplicationService {
+	rs := &ReplicationService{}
 
 	rs.hostIP = hostIP
 	rs.hostPort = hostPort
@@ -37,52 +29,51 @@ func New(gmsEvents <-chan structure.GMSEventMessage, hostIP string, hostPort str
 
 	rs.gms = gms
 
-	go rs.runService(gmsEvents)
-
 	return rs
 }
 
-func (rs *ReplicationService) runService(gmsEvents <-chan structure.GMSEventMessage) {
-	rs.addHead(rs.hostIPv4)
+func (rs *ReplicationService) GetMigrationRange(ipv4 string) (string, string) {
+	nodeHashInt := structure.HashKey(ipv4)
 
-	for {
-		event := <-gmsEvents
-		fmt.Println("Replication received GMS event: ", event)
+	predecessor := rs.findPredecessorNode(nodeHashInt)
 
-		if event.IsJoined {
-			rs.addHead(event.Node)
-		} else {
-			rs.removeHead(event.Node)
+	predecessorHashInt := structure.HashKey(predecessor)
+	migrationStart := big.NewInt(1)
+	migrationStart.Add(migrationStart, predecessorHashInt)
+
+	return migrationStart.String(), nodeHashInt.String()
+}
+
+func (rs *ReplicationService) IsPredecessor(ipv4 string) bool {
+	predecessor := rs.findPredecessorNode(structure.HashKey(rs.hostIPv4))
+	return ipv4 == predecessor
+}
+
+func (rs *ReplicationService) findPredecessorNode(hash *big.Int) string {
+	nodeList := rs.gms.GetAllNodes()
+
+	var responsibleNode string
+	// diff := hashDifference(structure.HashKey(responsibleNode), hash)
+
+	diff := big.NewInt(0)
+	maxSlice := make([]byte, 256)
+	// Initialize with largest byte value
+	for el := range maxSlice {
+		maxSlice[el] = 15
+	}
+
+	diff.SetBytes(maxSlice)
+
+	// Find node responsible for given key
+	for _, currNode := range nodeList {
+		currDiff := hashDifference(structure.HashKey(currNode), hash)
+		if currDiff.Cmp(diff) == LESS  && currDiff.Cmp(big.NewInt(0)) != EQUAL {
+			diff = currDiff
+			responsibleNode = currNode
 		}
-		fmt.Println("All chains: ", rs.getAllChains())
 	}
-}
 
-func (rs *ReplicationService) addHead(node string) {
-	rs.chainsLock.Lock()
-	_, alreadyExists := rs.chains[node]
-	if !alreadyExists {
-		rs.chains[node] = 1
-	}
-	rs.chainsLock.Unlock()
-}
-
-func (rs *ReplicationService) removeHead(node string) {
-	rs.chainsLock.Lock()
-	delete(rs.chains, node)
-	rs.chainsLock.Unlock()
-}
-
-func (rs *ReplicationService) getAllChains() []string {
-	allChains := []string{}
-
-	rs.chainsLock.Lock()
-	for key, _ := range rs.chains {
-		allChains = append(allChains, key)
-	}
-	rs.chainsLock.Unlock()
-
-	return allChains
+	return responsibleNode
 }
 
 // @Description: Determines which node is responsible for the given key
@@ -94,16 +85,20 @@ func (rs *ReplicationService) GetNextNode(key []byte) string {
 		return rs.hostIPv4
 	}
 
-	keyHashInt := hashInt(hex.EncodeToString(key))
+	keyHashInt := structure.HashKey(string(key))
 
+	return rs.findSuccessorNode(keyHashInt)
+}
+
+func (rs *ReplicationService) findSuccessorNode(hash *big.Int) string {
 	nodeList := rs.gms.GetAllNodes()
 
 	responsibleNode := nodeList[0]
-	diff := hashDifference(keyHashInt, hashInt(responsibleNode))
+	diff := hashDifference(hash, structure.HashKey(responsibleNode))
 
 	// Find node responsible for given key
 	for _, currNode := range nodeList {
-		currDiff := hashDifference(keyHashInt, hashInt(currNode))
+		currDiff := hashDifference(hash, structure.HashKey(currNode))
 		if currDiff.Cmp(diff) == LESS {
 			diff = currDiff
 			responsibleNode = currNode
@@ -140,19 +135,4 @@ func hashDifference(key *big.Int, node *big.Int) *big.Int {
 	}
 }
 
-// @Description: returns the key's hash value as a big int
-// @param key
-// @return *big.Int - Hash digest
-func hashInt(key string) *big.Int {
-	keyHash := hash(key)
-	keyHashInt := big.NewInt(0)
-	return keyHashInt.SetBytes(keyHash)
-}
 
-// @Description: returns the input string's sha256 digest
-// @param str
-// @return []byte - SHA256 digest
-func hash(str string) []byte {
-	digest := sha256.Sum256([]byte(str))
-	return digest[:]
-}
