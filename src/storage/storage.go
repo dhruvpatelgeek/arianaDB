@@ -1,9 +1,12 @@
 package storage
 
 import (
+	"crypto/sha256"
 	"dht/google_protocol_buffer/pb/protobuf"
+	"errors"
 	"fmt"
 	"log"
+	"math/big"
 	"os"
 	"runtime"
 	"sync"
@@ -234,9 +237,49 @@ func (sm *StorageModule) wipeout() uint32 {
 func (sm *StorageModule) processKeyMigrationRequest(request protobuf.InternalMsg) error {
 	// TODO: process key migration request
 	// extract lowerbound, upperbound, destination address & convert to appropriate
-	//destination := request.GetMigrationDestinationAddress()
+	destination := request.GetMigrationDestinationAddress()
+
 	//lowerbound := request.GetMigrationRangeLowerbound()
 	//upperbound := request.GetMigrationRangeUpperbound()
+	lowerbound := new(big.Int)
+	_, success := lowerbound.SetString(request.GetMigrationRangeLowerbound(), 16)
+	if !success {
+		return errors.New("Storage: Failed to convert the lowerbound from string to big.int while processing migrating request. Ignoring.")
+	}
+
+	upperbound := new(big.Int)
+	_, success = upperbound.SetString(request.GetMigrationRangeUpperbound(), 16)
+	if !success {
+		return errors.New("Storage: Failed to convert the upperbound from string to big.int while processing migrating request. Ignoring.")
+	}
+
+	// the new node's range is wrapped around if upperbound < lowerbound
+	// note x.Cmp(y) returns -1 if x < y
+	isWrapAround := upperbound.Cmp(lowerbound) == -1
+
+	sm.kvsLock.Lock()
+	for k, _ := range sm.kvStore {
+		hashedKey := HashKey(k) // TODO: replace this function with the shared functions
+		switch isWrapAround {
+		case false:
+			// when not wrapped around, the key is in new node's range if the hashedKey is inside [lowerbound:upperbound]
+			hashedKeyIsBounded := lowerbound.Cmp(hashedKey) == -1 && hashedKey.Cmp(upperbound) == -1
+			if hashedKeyIsBounded {
+				// migrate keys
+				fmt.Printf("TODO: send key (%s) to destination (%s)", k, destination) // TODO: implement this using the transport layer
+				delete(sm.kvStore, k)
+			}
+		case true:
+			// when wrapped around, the key is in new node's range if outside the range [upperbound:lowerbound] where upperbound < lowerbound
+			hashedKeyIsBounded := !(upperbound.Cmp(hashedKey) == -1 && hashedKey.Cmp(lowerbound) == -1)
+			if hashedKeyIsBounded {
+				// migrate keys
+				fmt.Printf("TODO: send key (%s) to destination (%s)", k, destination)
+				delete(sm.kvStore, k)
+			}
+		}
+	}
+	sm.kvsLock.Unlock()
 
 	// check if wrap around
 	return nil
@@ -272,4 +315,17 @@ func getCurrMem() uint64 {
 	var m runtime.MemStats
 	runtime.ReadMemStats(&m)
 	return bToMb((m.Alloc + m.StackInuse + m.MSpanInuse + m.MCacheInuse))
+}
+
+// TODO: remove when integrating with coordinator
+func HashKey(key string) *big.Int {
+	keyHash := hash(key)
+	keyHashInt := big.NewInt(0)
+	return keyHashInt.SetBytes(keyHash)
+}
+
+// TODO: remove when integrating with coordinator
+func hash(str string) []byte {
+	digest := sha256.Sum256([]byte(str))
+	return digest[:]
 }
