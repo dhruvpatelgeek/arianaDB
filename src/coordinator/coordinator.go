@@ -106,7 +106,7 @@ func (coordinator *CoordinatorService) processIncomingMessages() {
 		// retrieve incoming message
 		incomingMessage := <-coordinator.incomingMessagesChannel
 		kvRequest := &protobuf.KVRequest{}
-		err := proto.Unmarshal(incomingMessage.Payload, kvRequest)
+		err := proto.Unmarshal(incomingMessage.KVRequest, kvRequest)
 		if err != nil {
 			fmt.Println("Failed to unmarshal the KVRequest in incomingMessage.payload in CoordinatorService. Ignoring this message.", err)
 			continue
@@ -125,7 +125,7 @@ func (coordinator *CoordinatorService) processIncomingMessages() {
 				continue
 			}
 
-			coordinator.transport.SendCoordinatorToCoordinator(marshalledIncomingMessage, []byte("reques"+string(incomingMessage.Message)), destination)
+			coordinator.transport.SendCoordinatorToCoordinator(marshalledIncomingMessage, []byte("reques"+string(incomingMessage.MessageID)), destination)
 		}
 	}
 }

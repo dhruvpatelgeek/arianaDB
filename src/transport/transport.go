@@ -417,10 +417,9 @@ func (tm *TransportModule) clientReq(payload []byte, messageID []byte, clientAdd
 	} else {
 
 		internal_message_obj := protobuf.InternalMsg{
-			ClientAddr: clientAddr,
-			OriginAddr: "",
-			Payload:    payload,
-			Message:    messageID,
+			ClientAddress: &clientAddr,
+			KVRequest:     payload,
+			MessageID:     messageID,
 		}
 
 		tm.coodinatorChan <- internal_message_obj
@@ -437,32 +436,15 @@ func (tm *TransportModule) gossipPrepend(payload []byte, clientAddr string) {
 // in this case  will see if it is cached
 //
 func (tm *TransportModule) nodeReq(node2nodePayload []byte, messageID []byte) {
-	node2nodeMsg := &protobuf.InternalMsg{
-		ClientAddr: "",
-		OriginAddr: "",
-		Payload:    nil,
-		Message:    nil,
-	}
+	node2nodeMsg := &protobuf.InternalMsg{}
 	proto.Unmarshal(node2nodePayload, node2nodeMsg)
-	clientAddr := node2nodeMsg.GetClientAddr()
+	clientAddr := node2nodeMsg.GetClientAddress()
 	cachedResponse, found := check_cache(messageID)
 	if found {
 		tm.Send(cachedResponse, messageID, clientAddr)
 	} else {
 		tm.coodinatorChan <- *node2nodeMsg
 	}
-}
-
-// this is a function to reposnd to a request form a different node
-func (tm *TransportModule) nodeRes(node2nodePayload []byte, messageID []byte) {
-	// send the internalPayload to the client
-	node2nodeMsg := &protobuf.InternalMsg{}
-	proto.Unmarshal(node2nodePayload, node2nodeMsg)
-
-	response := node2nodeMsg.GetPayload()
-
-	cache_data(messageID, response)
-	tm.Send(response, messageID, node2nodeMsg.GetClientAddr())
 }
 
 //https://stackoverflow.com/questions/23558425/how-do-i-get-the-local-ip-address-in-go
@@ -592,12 +574,7 @@ func (tm *TransportModule) S2S_route_to_coodinator(payload []byte) {
 		log.Println("[CRITICAL] UNMARSHELLING ERROR S2S_route_to_coodinator")
 	}
 
-	node2nodeMsg := &protobuf.InternalMsg{
-		ClientAddr: "",
-		OriginAddr: "",
-		Payload:    nil,
-		Message:    nil,
-	}
+	node2nodeMsg := &protobuf.InternalMsg{}
 	proto.Unmarshal(inbound_payload.Payload, node2nodeMsg)
 	tm.coodinatorChan <- *node2nodeMsg
 }

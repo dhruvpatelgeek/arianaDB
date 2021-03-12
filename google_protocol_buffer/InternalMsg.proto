@@ -3,8 +3,11 @@ package protobuf;
 option go_package = "pb/protobuf";
 
 message InternalMsg {
-  string clientAddr = 1;
-  string originAddr = 2;
-  bytes payload = 3;
-  bytes message= 4;
+  bytes messageID = 1;
+  uint32 command = 2;
+  optional string clientAddress = 3;
+  optional bytes kVRequest = 4;
+  optional string migrationRangeLowerbound = 5;
+  optional string migrationRangeUpperbound = 6;
+  optional string migrationDestinationAddress = 7;
 }
