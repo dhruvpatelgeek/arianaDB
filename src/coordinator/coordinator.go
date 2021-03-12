@@ -2,6 +2,7 @@ package coordinator
 
 import (
 	"dht/google_protocol_buffer/pb/protobuf"
+	"dht/src/constants"
 	"dht/src/replication"
 	"dht/src/structure"
 	"dht/src/transport"
@@ -133,7 +134,20 @@ func (coordinator *CoordinatorService) processIncomingMessages() {
 func (coordinator *CoordinatorService) processGMSEvent() {
 	for {
 		gmsEventMessage := <-coordinator.gmsEventChannel
-		fmt.Println("Coordinator received GMS event: ", gmsEventMessage)
-		coordinator.toReplicationChannel <- gmsEventMessage
+		if(gmsEventMessage.IsJoined && coordinator.replicationService.IsPredecessor(gmsEventMessage.Node)){
+
+			lowerBound, upperBound := coordinator.replicationService.GetMigrationRange(gmsEventMessage.Node)
+			
+			toStorage := protobuf.InternalMsg{
+				MessageID: structure.GenerateMessageID(),
+				Command: uint32(constants.ProcessKeyMigrationRequest),
+				MigrationRangeLowerbound: &lowerBound,
+				MigrationRangeUpperbound: &upperBound,
+				MigrationDestinationAddress: &(gmsEventMessage.Node),
+			}
+			coordinator.toStorageChannel <- toStorage
+		}
 	}
 }
+
+
