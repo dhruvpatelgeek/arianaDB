@@ -78,8 +78,8 @@ func New(tm *transport.TransportModule, coordinatorMessage chan protobuf.Interna
 func (sm *StorageModule) runModule(tm *transport.TransportModule, coordinatorMessage chan protobuf.InternalMsg) {
 	for {
 		req := <-coordinatorMessage
-		response := sm.message_handler(req.Payload)
-		tm.ResSend(response, string(req.Message), req.ClientAddr)
+		response := sm.message_handler(req.KVRequest)
+		tm.ResSend(response, string(req.MessageID), *req.ClientAddress)
 
 	}
 }
