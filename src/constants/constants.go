@@ -6,4 +6,5 @@ const (
 	ProcessKVRequest InternalMessageCommands = iota + 1
 	ProcessKeyMigrationRequest
 	ProcessTableMigrationRequest
+	InsertMigratedKey
 )

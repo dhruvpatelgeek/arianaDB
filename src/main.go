@@ -31,22 +31,22 @@ func main() {
 	gmsChannel := make(chan []byte, 2)
 
 	// construct channels for intra-node service communication
-	gmsToCoordinatorChannel := make(chan structure.GMSEventMessage)
+	gmsToCoordinatorChannel := make(chan structure.GMSEventMessage, 2)
 	transportToCoordinatorChannel := make(chan protobuf.InternalMsg, 2)
+	transportToStorageChannel := make(chan protobuf.InternalMsg, 2000)
 	coordinatorToStorageChannel := make(chan protobuf.InternalMsg, 2)
-	coordinatorToReplicationChannel := make(chan structure.GMSEventMessage)
+	coordinatorToReplicationChannel := make(chan structure.GMSEventMessage, 2)
 
 	// get info about self
 	containerHostname := getOutboundIP().String()
 
 	// initialize transport layer
 	portInt, _ := strconv.Atoi(port)
-	transport, err := transport.New(containerHostname, portInt, gmsChannel, transportToCoordinatorChannel)
+	transport, err := transport.New(containerHostname, portInt, gmsChannel, transportToCoordinatorChannel, transportToStorageChannel)
 	if err != nil {
 		log.Fatal("Failed to initialize transport layer.", err)
 		panic("Error when creating transport layer. Abort creating server.")
 	}
-	go transport.Init_server()
 
 	// initialize group membership service
 	gms, err := membership.New(initialMembers, transport, gmsChannel, containerHostname, port, gmsToCoordinatorChannel)
@@ -56,7 +56,7 @@ func main() {
 	}
 
 	// initialize storage service
-	storage.New(transport, coordinatorToStorageChannel)
+	storage.New(transport, coordinatorToStorageChannel, transportToStorageChannel)
 
 	// initialize replicationService
 	replicationService := replication.New(containerHostname, port, gms)

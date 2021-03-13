@@ -3,6 +3,7 @@ package transport
 import (
 	"dht/google_protocol_buffer/pb/protobuf"
 	"dht/src/constants"
+	"errors"
 	"fmt"
 	"hash/crc32"
 	"log"
@@ -10,9 +11,11 @@ import (
 	"os"
 	"runtime"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/golang/protobuf/proto"
+	"github.com/google/uuid"
 	"github.com/pmylund/go-cache"
 )
 
@@ -63,7 +66,6 @@ var MULTI_CORE_MODE = true
 var MAP_SIZE_MB = 70
 var CACHE = 10
 var CACHE_LIFESPAN = 5 // how long should the cache persist
-var LOCAL_PORT string
 var SERVER_TO_SERVER_TIMEOUT = 5 * time.Second
 
 //CONNECTION-------------------------------
@@ -77,28 +79,40 @@ type Message struct {
 
 // message struct for communicating with the transport module
 type TransportModule struct {
-	connection      *net.UDPConn
-	S2Sconnection   *net.TCPListener
+	connection                 *net.UDPConn
+	storageToStorageConnection *net.TCPListener
+
 	heartbeatChanel chan []byte
 	coodinatorChan  chan protobuf.InternalMsg
+	storageChannel  chan protobuf.InternalMsg
+
+	hostIP               string
+	clientToServerPort   string
+	storageToStoragePort string
+	hostIPv4             string
 }
 
 // initilaizes the transport layer
-func New(ip string, port int, gmsChan chan []byte, StorageChan chan protobuf.InternalMsg) (*TransportModule, error) {
-
-	LOCAL_PORT = strconv.Itoa(port)
-	S2S_PORT := port + 1
+func New(ip string, clientToServerPort int, gmsChan chan []byte, coordinatorChannel chan protobuf.InternalMsg, storageChannel chan protobuf.InternalMsg) (*TransportModule, error) {
 	tm := &TransportModule{}
-	if !validPort(port) {
+	if !validPort(clientToServerPort) {
 		return tm, nil
 	}
 
-	conn := listen(ip, port)
-	s2sconn := S2S_TCPlisten(ip, S2S_PORT)
-	tm.coodinatorChan = StorageChan
-	tm.connection = conn
+	tm.hostIP = ip
+	tm.clientToServerPort = strconv.Itoa(clientToServerPort)
+	tm.storageToStoragePort = strconv.Itoa(clientToServerPort + 1)
+	tm.hostIPv4 = ip + ":" + tm.storageToStoragePort
+
+	tm.connection = createUDPConnection(ip, clientToServerPort)
+	tm.storageToStorageConnection = createTCPConnection(ip, tm.storageToStoragePort) // TODO: wtf is this?
+
+	tm.coodinatorChan = coordinatorChannel
 	tm.heartbeatChanel = gmsChan
-	tm.S2Sconnection = s2sconn
+	tm.storageChannel = storageChannel
+	go tm.bootstrap()
+
+	// TODO: listen to TCP
 	go proportionalCollector()
 
 	return tm, nil
@@ -249,8 +263,8 @@ func (tm *TransportModule) UDP_daemon() {
 	}
 
 }
-func S2S_TCPlisten(selfIP string, port int) *net.TCPListener {
-	address, err := net.ResolveTCPAddr("tcp", selfIP+":"+strconv.Itoa(port))
+func createTCPConnection(selfIP string, port string) *net.TCPListener {
+	address, err := net.ResolveTCPAddr("tcp", selfIP+":"+port)
 	if err != nil {
 		fmt.Errorf("Unable to resolve tcp address (ip: %s, port: %d", selfIP, port)
 	}
@@ -265,7 +279,7 @@ func S2S_TCPlisten(selfIP string, port int) *net.TCPListener {
 
 // initalizes a UDP listern on the given port
 // and returns the conneciton object
-func listen(selfIP string, port int) *net.UDPConn {
+func createUDPConnection(selfIP string, port int) *net.UDPConn {
 	var err error
 
 	address, err := net.ResolveUDPAddr("udp", selfIP+":"+strconv.Itoa(port))
@@ -292,15 +306,13 @@ func listen(selfIP string, port int) *net.UDPConn {
 }
 
 //initialises the server based on port number
-func (tm *TransportModule) Init_server() {
+func (tm *TransportModule) bootstrap() {
 	if MULTI_CORE_MODE {
 		fmt.Println("[MULTICORE MODE] [", runtime.NumCPU(), "] SPANNERS AT PORT [", tm.connection.LocalAddr(), "] SYS MEM LIMIT [", MEMORY_LIMIT, "]")
 	}
 
-	//go proportionalCollector()
-	// tm.daemonSpawner()
 	go tm.UDP_daemon()
-
+	go tm.processStorageToStorageMessages() // TODO: come up with better names for these daemons...
 }
 
 //for debug to view packet b4 sending
@@ -403,7 +415,6 @@ func (tm *TransportModule) router(serialMsg []byte, clientAddr string) {
 			tm.clientReq(payload, messageID, clientAddr)
 		}
 	} else {
-		//if numStorageMessages%500 == 0 {
 		tm.clientReq(payload, messageID, clientAddr)
 	}
 }
@@ -436,11 +447,19 @@ func (tm *TransportModule) gossipPrepend(payload []byte, clientAddr string) {
 
 // this is the funciton call if the recived message is fomr an other node
 // in this case  will see if it is cached
-//
 func (tm *TransportModule) nodeReq(node2nodePayload []byte, messageID []byte) {
+	/* TODO: this needs to change
+	1. this assumes every internal message sent will be sent to a client
+	2. now, we send internal messages that have nothing to do with the client.
+		- maybe the internal message should specify the type: ClientRequest vs ServerRequest
+		- check cache & respond if this is a client request
+		- forward directly to coordinatorChannel  if this is a server request
+	*/
+
 	node2nodeMsg := &protobuf.InternalMsg{}
 	proto.Unmarshal(node2nodePayload, node2nodeMsg)
-	clientAddr := node2nodeMsg.GetClientAddress()
+	// TODO: create a field in InternalMsg for ResponseRequired bool?
+	clientAddr := node2nodeMsg.GetClientAddress() // TODO: this is now an optional arg since an internal message
 	cachedResponse, found := check_cache(messageID)
 	if found {
 		tm.Send(cachedResponse, messageID, clientAddr)
@@ -504,16 +523,19 @@ func (tm *TransportModule) TCPSend(payload []byte, destAddr string) {
 	}
 }
 
-func (tm *TransportModule) SendHeartbeat(payload []byte, messageID []byte, destAddr string) {
-	message, err := generateShell(payload, messageID)
+func (tm *TransportModule) SendHeartbeat(heartbeat *protobuf.MembershipReq, destAddr string) error {
+	// TODO: marshal membership request
+	serializedHeartbeat, err := proto.Marshal(heartbeat)
+	if err != nil {
+		fmt.Errorf("[Transport] Failed to marshal hearbeat message")
+		return err
+	}
+	messageID := []byte("gossip" + uuid.New().String())
+
+	message, err := generateShell(serializedHeartbeat, messageID)
 	if err != nil {
 		fmt.Println("payload gen failed")
-	}
-
-	msg := &protobuf.Msg{}
-	error := proto.Unmarshal(message, msg)
-	if error != nil {
-		log.Println("Unable to deserialize ", error)
+		return err
 	}
 
 	addr, err := net.ResolveUDPAddr("udp", destAddr)
@@ -522,26 +544,38 @@ func (tm *TransportModule) SendHeartbeat(payload []byte, messageID []byte, destA
 	}
 
 	tm.connection.WriteToUDP(message, addr)
+	return nil
 }
 
-func (tm *TransportModule) SendStorageToStorage(payload []byte, messageID []byte, destAddr string) {
-	message, err := generateShell(payload, messageID)
+func (tm *TransportModule) SendStorageToStorage(storageMessage *protobuf.InternalMsg, destAddr string) error {
+	// TODO: consider using a separate port
+	// TODO: consider using a TCP port for higher throughput in milestone 3
+	serializedMessage, err := proto.Marshal(storageMessage)
 	if err != nil {
-		fmt.Println("payload gen failed")
+		return err
 	}
 
-	msg := &protobuf.Msg{}
-	error := proto.Unmarshal(message, msg)
-	if error != nil {
-		log.Println("Unable to deserialize ", error)
+	// obtain the remote's S2S TCP port
+	splitDestinationAddress := strings.Split(destAddr, ":")
+	if len(splitDestinationAddress) != 2 {
+		return errors.New("destination address (" + destAddr + ") did not contain IP:PORT ")
 	}
-
-	addr, err := net.ResolveUDPAddr("udp", destAddr)
+	destinationAddress := splitDestinationAddress[0]
+	destinationClientPort, err := strconv.Atoi(splitDestinationAddress[1])
 	if err != nil {
-		log.Println("Address error ", err)
+		return err
+	}
+	destinationStorageToStoragePort := strconv.Itoa(destinationClientPort + 1) // TODO: create a function for this to remove duplicated magic constants
+	destinationIPv4 := destinationAddress + ":" + destinationStorageToStoragePort
+
+	s2sConnection, err := net.Dial("tcp", destinationIPv4)
+	if err != nil {
+		return errors.New("Unable to open a S2S TCP connection to " + destinationIPv4)
 	}
 
-	tm.connection.WriteToUDP(message, addr)
+	// send data
+	s2sConnection.Write(serializedMessage)
+	return nil
 }
 
 func (tm *TransportModule) CachedSendStorageToStorage(payload []byte, messageID string, destAddr string) {
@@ -550,35 +584,34 @@ func (tm *TransportModule) CachedSendStorageToStorage(payload []byte, messageID 
 
 }
 
-func (tm *TransportModule) TCP_Daemon() {
+func (tm *TransportModule) processStorageToStorageMessages() {
+	defer tm.storageToStorageConnection.Close()
+
 	for {
 		buffer := make([]byte, 20100)
-		conn, err := tm.S2Sconnection.Accept()
+		conn, err := tm.storageToStorageConnection.Accept()
 		if err != nil {
-			log.Println("[NORMAL] TCP READ ERROR > TCP_Daemon")
+			log.Println(err)
+			continue
 		}
+
 		n, err := conn.Read(buffer)
 		if err != nil {
-			log.Println("[NORMAL] TCP >CONN< READ ERROR > TCP_Daemon")
+			log.Println("[Transport] Unable to read the value from the storage-to-storage connection.")
+			continue
 		}
 
-		tm.S2S_route_to_coodinator(buffer[:n])
-	}
-}
+		payload := buffer[:n]
+		internalMessage := &protobuf.InternalMsg{}
+		err = proto.Unmarshal(payload, internalMessage)
 
-func (tm *TransportModule) S2S_route_to_coodinator(payload []byte) {
-	inbound_payload := &protobuf.S2S{
-		Payload:     nil,
-		WhichModule: "",
-	}
-	err := proto.Unmarshal(payload, inbound_payload)
-	if err != nil {
-		log.Println("[CRITICAL] UNMARSHELLING ERROR S2S_route_to_coodinator")
-	}
+		if err != nil {
+			log.Println("[Transport] Unable to marshal a storage-to-storage request. Ignoring this message")
+			continue
+		}
 
-	node2nodeMsg := &protobuf.InternalMsg{}
-	proto.Unmarshal(inbound_payload.Payload, node2nodeMsg)
-	tm.coodinatorChan <- *node2nodeMsg
+		tm.storageChannel <- *internalMessage
+	}
 }
 
 func (tm *TransportModule) SendCoordinatorToCoordinator(payload []byte, messageID []byte, destAddr string) {
@@ -600,13 +633,3 @@ func (tm *TransportModule) SendCoordinatorToCoordinator(payload []byte, messageI
 
 	tm.connection.WriteToUDP(message, addr)
 }
-
-// TODO: sendHeartbeat(destination, payload) UDP
-// TODO: sendStorageToClient() // done UDP
-// TODO: sendStorageToStorage()// done UDP
-//TODO: sendCoordinatorToCoordinator() // done UDP
-//TODO: sendReplicationToReplication() // done TCP
-
-//TODO: channels
-//GMS (heartbeat message) DONE
-//Coordinator ? so whatever comes to storage wire it to coodinator done
