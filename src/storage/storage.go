@@ -82,7 +82,7 @@ func New(tm *transport.TransportModule,
 	}
 	go sm.processCoordinatorMessages()
 	go sm.processStorageToStorageMessages()
-	go sm.monitorKVStoreSize()
+	// go sm.monitorKVStoreSize()
 
 	return &sm
 }
