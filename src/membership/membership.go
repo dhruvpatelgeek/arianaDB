@@ -169,11 +169,14 @@ func (gms *MembershipService) heartbeat() {
 func (gms *MembershipService) getGossipGroup() []string {
 	// create a list of other members excluding itself.
 	var otherMembers []string
+
+	gms.membersListLock.Lock()
 	for member, _ := range gms.members {
 		if member != gms.address {
 			otherMembers = append(otherMembers, member)
 		}
 	}
+	gms.membersListLock.Unlock()
 
 	var numOtherMembers = len(otherMembers)
 

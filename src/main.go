@@ -31,11 +31,11 @@ func main() {
 	gmsChannel := make(chan []byte, 2)
 
 	// construct channels for intra-node service communication
-	gmsToCoordinatorChannel := make(chan structure.GMSEventMessage, 2)
-	transportToCoordinatorChannel := make(chan protobuf.InternalMsg, 2)
-	transportToStorageChannel := make(chan protobuf.InternalMsg, 2000)
-	coordinatorToStorageChannel := make(chan protobuf.InternalMsg, 2)
-	coordinatorToReplicationChannel := make(chan structure.GMSEventMessage, 2)
+	gmsToCoordinatorChannel := make(chan structure.GMSEventMessage, 20)
+	transportToCoordinatorChannel := make(chan protobuf.InternalMsg, 20)
+	transportToStorageChannel := make(chan protobuf.InternalMsg, 20)
+	coordinatorToStorageChannel := make(chan protobuf.InternalMsg, 20)
+	coordinatorToReplicationChannel := make(chan structure.GMSEventMessage, 20)
 
 	// get info about self
 	containerHostname := getOutboundIP().String()
