@@ -569,13 +569,16 @@ func (tm *TransportModule) SendStorageToStorage(storageMessage *protobuf.Interna
 	destinationIPv4 := destinationAddress + ":" + destinationStorageToStoragePort
 
 	s2sConnection, err := net.Dial("tcp", destinationIPv4)
+	defer s2sConnection.Close()
 	if err != nil {
+		fmt.Println("FAILED TO DIAL TCP")
+		fmt.Println(err)
 		return errors.New("Unable to open a S2S TCP connection to " + destinationIPv4)
 	}
 
 	// send data
-	s2sConnection.Write(serializedMessage)
-	return nil
+	_, err = s2sConnection.Write(serializedMessage)
+	return err
 }
 
 func (tm *TransportModule) CachedSendStorageToStorage(payload []byte, messageID string, destAddr string) {

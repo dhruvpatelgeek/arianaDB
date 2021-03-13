@@ -82,7 +82,7 @@ func New(tm *transport.TransportModule,
 	}
 	go sm.processCoordinatorMessages()
 	go sm.processStorageToStorageMessages()
-	//go sm.monitorKVStoreSize()
+	// go sm.monitorKVStoreSize()
 
 	return &sm
 }
@@ -279,7 +279,7 @@ func (sm *StorageModule) processKeyMigrationRequest(request protobuf.InternalMsg
 				// migrate keys
 				err := sm.migrateKey(key, value, destination)
 				if err != nil {
-					fmt.Errorf("", err)
+					fmt.Println("[Storage] Failed to migrate key.", err.Error())
 				}
 			}
 		case true:
@@ -289,7 +289,7 @@ func (sm *StorageModule) processKeyMigrationRequest(request protobuf.InternalMsg
 				// migrate keys
 				err := sm.migrateKey(key, value, destination)
 				if err != nil {
-					fmt.Errorf("", err)
+					fmt.Println("[Storage] Failed to migrate key.", err.Error())
 				}
 			}
 		}
@@ -318,7 +318,11 @@ func (sm *StorageModule) migrateKey(key string, value []byte, destination string
 		KVRequest: serializedKVRequest,
 	}
 
-	sm.tm.SendStorageToStorage(internalMessage, destination)
+	err = sm.tm.SendStorageToStorage(internalMessage, destination)
+	if err != nil {
+		return err
+	}
+
 	delete(sm.kvStore, key)
 	return nil
 }
