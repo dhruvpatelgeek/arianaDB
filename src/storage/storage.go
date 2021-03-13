@@ -82,7 +82,7 @@ func New(tm *transport.TransportModule,
 	}
 	go sm.processCoordinatorMessages()
 	go sm.processStorageToStorageMessages()
-	// go sm.monitorKVStoreSize()
+	go sm.monitorKVStoreSize()
 
 	return &sm
 }
@@ -249,17 +249,18 @@ func (sm *StorageModule) processKeyMigrationRequest(request protobuf.InternalMsg
 	// TODO: process key migration request
 	// extract lowerbound, upperbound, destination address & convert to appropriate
 	destination := request.GetMigrationDestinationAddress()
+	numMigrated := 0
 
 	//lowerbound := request.GetMigrationRangeLowerbound()
 	//upperbound := request.GetMigrationRangeUpperbound()
 	lowerbound := new(big.Int)
-	_, success := lowerbound.SetString(request.GetMigrationRangeLowerbound(), 16)
+	_, success := lowerbound.SetString(request.GetMigrationRangeLowerbound(), 10)
 	if !success {
 		return errors.New("Storage: Failed to convert the lowerbound from string to big.int while processing migrating request. Ignoring.")
 	}
 
 	upperbound := new(big.Int)
-	_, success = upperbound.SetString(request.GetMigrationRangeUpperbound(), 16)
+	_, success = upperbound.SetString(request.GetMigrationRangeUpperbound(), 10)
 	if !success {
 		return errors.New("Storage: Failed to convert the upperbound from string to big.int while processing migrating request. Ignoring.")
 	}
@@ -277,6 +278,7 @@ func (sm *StorageModule) processKeyMigrationRequest(request protobuf.InternalMsg
 			hashedKeyIsBounded := lowerbound.Cmp(hashedKey) == -1 && hashedKey.Cmp(upperbound) == -1
 			if hashedKeyIsBounded {
 				// migrate keys
+				numMigrated++
 				err := sm.migrateKey(key, value, destination)
 				if err != nil {
 					fmt.Println("[Storage] Failed to migrate key.", err.Error())
@@ -287,6 +289,7 @@ func (sm *StorageModule) processKeyMigrationRequest(request protobuf.InternalMsg
 			hashedKeyIsBounded := !(upperbound.Cmp(hashedKey) == -1 && hashedKey.Cmp(lowerbound) == -1)
 			if hashedKeyIsBounded {
 				// migrate keys
+				numMigrated++
 				err := sm.migrateKey(key, value, destination)
 				if err != nil {
 					fmt.Println("[Storage] Failed to migrate key.", err.Error())
@@ -294,6 +297,7 @@ func (sm *StorageModule) processKeyMigrationRequest(request protobuf.InternalMsg
 			}
 		}
 	}
+	fmt.Println("Num migrated ", numMigrated)
 	sm.kvsLock.Unlock()
 
 	// check if wrap around
