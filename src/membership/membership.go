@@ -229,11 +229,8 @@ func (gms *MembershipService) bootstrap(initialMembers []string) {
 				MembersList:            gms.GetAllNodes(),
 				JoinDestinationAddress: &address,
 			}
-
-			marshalledJoinRequest, err := proto.Marshal(joinRequest)
-			if err == nil {
-				gms.transport.SendHeartbeat(marshalledJoinRequest, structure.GenerateMessageID(), address)
-			} else {
+			err := gms.transport.SendHeartbeat(joinRequest, address)
+			if err != nil {
 				fmt.Println(err)
 			}
 		}
@@ -296,18 +293,16 @@ func (gms *MembershipService) processSendJoinRequest(request *protobuf.Membershi
 	gms.membersListLock.Unlock()
 
 	// create a join request to be sent to destination
-	MReq := &protobuf.MembershipReq{
+	joinRequest := &protobuf.MembershipReq{
 		SourceAddress: gms.address,
 		Command:       HeartbeatGossipCommand,
 		MembersList:   gms.GetAllNodes(),
 	}
 
-	payload, err := proto.Marshal(MReq)
+	err := gms.transport.SendHeartbeat(joinRequest, destination)
 	if err != nil {
-		return err
+		fmt.Errorf("", err)
 	}
-
-	gms.transport.SendHeartbeat(payload, structure.GenerateMessageID(), destination)
 
 	msg := structure.GMSEventMessage{
 		IsJoined: true,
@@ -320,12 +315,16 @@ func (gms *MembershipService) processSendJoinRequest(request *protobuf.Membershi
 
 // sendList(): send this node's membership list to the destination address
 func (gms *MembershipService) sendList(destination string) {
-	isSuccessful, payload := gms.marshalMembershipRequest(HeartbeatGossipCommand, gms.GetAllNodes())
-	if !isSuccessful {
-		return
+	membershipRequest := &protobuf.MembershipReq{
+		SourceAddress: gms.address,
+		Command:       HeartbeatGossipCommand,
+		MembersList:   gms.GetAllNodes(),
 	}
 
-	gms.transport.SendHeartbeat(payload, structure.GenerateMessageID(), destination)
+	err := gms.transport.SendHeartbeat(membershipRequest, destination)
+	if err != nil {
+		fmt.Errorf("", err)
+	}
 }
 
 //GetAllNodes () return all membership lists as an array of string
@@ -341,23 +340,6 @@ func (gms *MembershipService) GetAllNodes() []string {
 	gms.membersListLock.Unlock()
 
 	return allNodes
-}
-
-
-// marshal membershipRequest
-func (gms *MembershipService) marshalMembershipRequest(command uint32, list []string) (bool, []byte) {
-	MReq := &protobuf.MembershipReq{
-		SourceAddress: gms.address,
-		Command:       command,
-		MembersList:   list,
-	}
-
-	data, err := proto.Marshal(MReq)
-	if err != nil {
-		fmt.Println("failChecked to encode MembershipReq: ", err)
-		return false, nil
-	}
-	return true, data
 }
 
 // unmarshal membershipRequest

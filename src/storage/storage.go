@@ -2,17 +2,22 @@ package storage
 
 import (
 	"dht/google_protocol_buffer/pb/protobuf"
+	"errors"
 	"fmt"
 	"log"
+	"math/big"
 	"os"
 	"runtime"
 	"sync"
 	"syscall"
+	"time"
 
 	"dht/src/constants"
+	"dht/src/structure"
 	"dht/src/transport"
 
 	"github.com/golang/protobuf/proto"
+	"github.com/google/uuid"
 )
 
 /** TODO: refactor list
@@ -54,6 +59,9 @@ type StorageModule struct {
 	kvStore map[string][]byte
 	kvsLock *sync.Mutex
 	tm      *transport.TransportModule
+
+	coordinatorToStorageChannel chan protobuf.InternalMsg
+	transportToStorageChannel   chan protobuf.InternalMsg
 }
 
 // @Description: Initializes a new storage module
@@ -61,14 +69,20 @@ type StorageModule struct {
 // @param reqFrom_tm - channel that transport module send requests on
 // @param gms - group membership service that gives the nodes in the network
 // @return *StorageModule
-func New(tm *transport.TransportModule, coordinatorMessage chan protobuf.InternalMsg) *StorageModule {
+func New(tm *transport.TransportModule,
+	coordinatorToStorageChannel chan protobuf.InternalMsg,
+	transportToStorageChannel chan protobuf.InternalMsg) *StorageModule {
 
 	sm := StorageModule{
-		kvStore: make(map[string][]byte),
-		kvsLock: &sync.Mutex{},
-		tm:      tm,
+		kvStore:                     make(map[string][]byte),
+		kvsLock:                     &sync.Mutex{},
+		tm:                          tm,
+		coordinatorToStorageChannel: coordinatorToStorageChannel,
+		transportToStorageChannel:   transportToStorageChannel,
 	}
-	go sm.runModule(coordinatorMessage)
+	go sm.processCoordinatorMessages()
+	go sm.processStorageToStorageMessages()
+	// go sm.monitorKVStoreSize()
 
 	return &sm
 }
@@ -77,9 +91,9 @@ func New(tm *transport.TransportModule, coordinatorMessage chan protobuf.Interna
 // @param tm - transport module that sends requests to the storage module
 // @param reqFrom_tm - channel that transport module send requests on
 // @param gms - group membership service that gives the nodes in the network
-func (sm *StorageModule) runModule(coordinatorMessage chan protobuf.InternalMsg) {
+func (sm *StorageModule) processCoordinatorMessages() {
 	for {
-		request := <-coordinatorMessage
+		request := <-sm.coordinatorToStorageChannel
 		command := request.GetCommand()
 		switch constants.InternalMessageCommands(command) {
 		case constants.ProcessKVRequest:
@@ -234,11 +248,82 @@ func (sm *StorageModule) wipeout() uint32 {
 func (sm *StorageModule) processKeyMigrationRequest(request protobuf.InternalMsg) error {
 	// TODO: process key migration request
 	// extract lowerbound, upperbound, destination address & convert to appropriate
-	//destination := request.GetMigrationDestinationAddress()
+	destination := request.GetMigrationDestinationAddress()
+
 	//lowerbound := request.GetMigrationRangeLowerbound()
 	//upperbound := request.GetMigrationRangeUpperbound()
+	lowerbound := new(big.Int)
+	_, success := lowerbound.SetString(request.GetMigrationRangeLowerbound(), 10)
+	if !success {
+		return errors.New("Storage: Failed to convert the lowerbound from string to big.int while processing migrating request. Ignoring.")
+	}
+
+	upperbound := new(big.Int)
+	_, success = upperbound.SetString(request.GetMigrationRangeUpperbound(), 10)
+	if !success {
+		return errors.New("Storage: Failed to convert the upperbound from string to big.int while processing migrating request. Ignoring.")
+	}
+
+	// the new node's range is wrapped around if upperbound < lowerbound
+	// note x.Cmp(y) returns -1 if x < y
+	isWrapAround := upperbound.Cmp(lowerbound) == -1
+
+	sm.kvsLock.Lock()
+	for key, value := range sm.kvStore {
+		hashedKey := structure.HashKey(key) // TODO: replace this function with the shared functions
+		switch isWrapAround {
+		case false:
+			// when not wrapped around, the key is in new node's range if the hashedKey is inside [lowerbound:upperbound]
+			hashedKeyIsBounded := lowerbound.Cmp(hashedKey) == -1 && hashedKey.Cmp(upperbound) == -1
+			if hashedKeyIsBounded {
+				// migrate keys
+				err := sm.migrateKey(key, value, destination)
+				if err != nil {
+					fmt.Println("[Storage] Failed to migrate key.", err.Error())
+				}
+			}
+		case true:
+			// when wrapped around, the key is in new node's range if outside the range [upperbound:lowerbound] where upperbound < lowerbound
+			hashedKeyIsBounded := !(upperbound.Cmp(hashedKey) == -1 && hashedKey.Cmp(lowerbound) == -1)
+			if hashedKeyIsBounded {
+				// migrate keys
+				err := sm.migrateKey(key, value, destination)
+				if err != nil {
+					fmt.Println("[Storage] Failed to migrate key.", err.Error())
+				}
+			}
+		}
+	}
+	sm.kvsLock.Unlock()
 
 	// check if wrap around
+	return nil
+}
+
+// ASSUMES callee already holds the lock to sm.kvStore
+func (sm *StorageModule) migrateKey(key string, value []byte, destination string) error {
+	kvRequest := &protobuf.KVRequest{
+		Command: PUT,
+		Key:     []byte(key),
+		Value:   value,
+	}
+	serializedKVRequest, err := proto.Marshal(kvRequest)
+	if err != nil {
+		return errors.New("[Storage] failed to marshal KVRequest during migration. Ignoring this key")
+	}
+
+	internalMessage := &protobuf.InternalMsg{
+		MessageID: []byte(uuid.New().String()),
+		Command:   uint32(constants.InsertMigratedKey),
+		KVRequest: serializedKVRequest,
+	}
+
+	err = sm.tm.SendStorageToStorage(internalMessage, destination)
+	if err != nil {
+		return err
+	}
+
+	delete(sm.kvStore, key)
 	return nil
 }
 
@@ -272,4 +357,39 @@ func getCurrMem() uint64 {
 	var m runtime.MemStats
 	runtime.ReadMemStats(&m)
 	return bToMb((m.Alloc + m.StackInuse + m.MSpanInuse + m.MCacheInuse))
+}
+
+func (sm *StorageModule) processStorageToStorageMessages() {
+	for {
+		message := <-sm.transportToStorageChannel
+		messageID := string(message.GetMessageID())
+
+		// TODO: message.GetCommand() returns the incorrect message
+		switch internalMsgCommand := constants.InternalMessageCommands(message.GetCommand()); internalMsgCommand {
+		case constants.InsertMigratedKey:
+			kvRequest := &protobuf.KVRequest{}
+			err := proto.Unmarshal(message.GetKVRequest(), kvRequest)
+			if err != nil {
+				fmt.Printf("[Storage] Failed to unmarshal KVRrequest (id: %s) attached to InternalMsg from storage-to-storage channel.\n", messageID)
+				fmt.Printf("[Storage] Ignoring InternalMsg (id: %s) from storage-to-storage channel.\n", messageID)
+				continue
+			}
+
+			switch kvCommand := kvRequest.GetCommand(); kvCommand {
+			case PUT:
+				_ = sm.put(kvRequest.GetKey(), kvRequest.GetValue(), kvRequest.GetVersion())
+			default:
+				fmt.Printf("[Storage] Storage-to-Storage channel received an unsupported KVRequest command (%d). Only supports PUT (%d) commands.\n", kvCommand, PUT)
+			}
+		default:
+			fmt.Printf("[Storage] S2S received an unsupported InternalMsg command (%d). Only supports (%d) command.\n", internalMsgCommand, constants.InsertMigratedKey)
+		}
+	}
+}
+
+func (sm *StorageModule) monitorKVStoreSize() {
+	for {
+		time.Sleep(5 * time.Second)
+		fmt.Printf("[Storage] Number of keys in KVStore: %d\n", len(sm.kvStore))
+	}
 }
