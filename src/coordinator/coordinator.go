@@ -52,10 +52,10 @@ type CoordinatorService struct {
 	incomingMessagesChannel chan protobuf.InternalMsg
 	toStorageChannel        chan protobuf.InternalMsg
 	toReplicationChannel    chan structure.GMSEventMessage
-	toRaftChan 				chan protobuf.RaftPayload
-	transport_raft			chan protobuf.RaftPayload
-	transport          *transport.TransportModule
-	replicationService *replication.ReplicationService
+	toRaftChan              chan protobuf.RaftPayload
+	transport_raft          chan protobuf.RaftPayload
+	transport               *transport.TransportModule
+	replicationService      *replication.ReplicationService
 
 	hostIP   string
 	hostPort string
@@ -83,8 +83,8 @@ func New(
 	coordinator.toReplicationChannel = coordinatorToReplicationChannel
 
 	// for the raft protocol------------------------------
-	coordinator.transport_raft=transportToCoordinatorChannel_RAFT
-	coordinator.toRaftChan=coordinatorToRaftChan
+	coordinator.transport_raft = transportToCoordinatorChannel_RAFT
+	coordinator.toRaftChan = coordinatorToRaftChan
 
 	coordinator.transport = transport
 	coordinator.replicationService = replicationService
@@ -141,31 +141,34 @@ func (coordinator *CoordinatorService) processIncomingMessages() {
 func (coordinator *CoordinatorService) processGMSEvent() {
 	for {
 		gmsEventMessage := <-coordinator.gmsEventChannel
-		if(gmsEventMessage.IsJoined && coordinator.replicationService.IsPredecessor(gmsEventMessage.Node)){
+		if gmsEventMessage.IsJoined && coordinator.replicationService.IsPredecessor(gmsEventMessage.Node) {
 
 			lowerBound, upperBound := coordinator.replicationService.GetMigrationRange(gmsEventMessage.Node)
-			
+
+			originatingTable := uint32(constants.Head)
+			destinationTable := uint32(constants.Middle)
 			toStorage := protobuf.InternalMsg{
-				MessageID: structure.GenerateMessageID(),
-				Command: uint32(constants.ProcessKeyMigrationRequest),
-				MigrationRangeLowerbound: &lowerBound,
-				MigrationRangeUpperbound: &upperBound,
+				MessageID:                   structure.GenerateMessageID(),
+				Command:                     uint32(constants.ProcessKeyMigrationRequest),
+				OriginatingNodeTable:        &originatingTable,
+				DestinationNodeTable:        &destinationTable,
 				MigrationDestinationAddress: &(gmsEventMessage.Node),
+				MigrationRangeLowerbound:    &lowerBound,
+				MigrationRangeUpperbound:    &upperBound,
 			}
 			coordinator.toStorageChannel <- toStorage
 		}
 	}
 }
 
-func (coordinator *CoordinatorService) processRaftMessages(){
+func (coordinator *CoordinatorService) processRaftMessages() {
 	// simply forward it to the raft module
-	for{
-		messageForRaft:= protobuf.RaftPayload{}
+	for {
+		messageForRaft := protobuf.RaftPayload{}
 		select {
-		case messageForRaft=<-coordinator.transport_raft:
-			coordinator.toRaftChan<-messageForRaft;
+		case messageForRaft = <-coordinator.transport_raft:
+			coordinator.toRaftChan <- messageForRaft
 		}
 	}
 
 }
-

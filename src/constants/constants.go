@@ -7,7 +7,7 @@ const (
 	ProcessPropagatedKVRequest
 	ProcessKeyMigrationRequest
 	ProcessTableMigrationRequest
-	InsertMigratedKey
+	ProcessStorageToStorageKVRequest
 )
 
 type TableSelection uint32

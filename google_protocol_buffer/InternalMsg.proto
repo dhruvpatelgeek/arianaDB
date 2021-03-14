@@ -33,7 +33,8 @@ message InternalMsg {
       1. unpack, check the command, and do stuff (commit, rs: where to send next)
         - coordinator doesn't have to do anything because when it forwards the request to storage,
         - storage will check if response is required & send a respone to the client.
-  */  optional bool respondToClient = 5;
+  */
+  optional bool respondToClient = 5;
   optional uint32 originatingNodeTable = 6;
 
   /*  key migration & table migration generalized messages: 

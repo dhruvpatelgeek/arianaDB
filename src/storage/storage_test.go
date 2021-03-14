@@ -128,7 +128,10 @@ func TestReqRes(t *testing.T) {
 	}
 }
 
-/**	TODO: key migration unit test
-- plan:
-	-
+/**	TODO: StorageService test plan
+- mock the transport layer
+- test client kv requests
+- test storage-to-storage requests
+- test key migration triggered by coordinator
+- test table migration triggered by coordinator
 */
