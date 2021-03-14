@@ -40,7 +40,7 @@ type node struct {
 var MIN_TIME = 2
 var MAX_TIME = 10
 var REFRESH_RATE =500*time.Millisecond
-var NETWORK_DELAY=1
+var NETWORK_DELAY=1 // added the network delay veriable
 var GAIN=1*time.Second
 //-------------------------------------
 // COLOR MESSAGES-----------------------
