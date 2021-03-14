@@ -331,6 +331,9 @@ func (this *node) askForVotes(fsm_event *fsm.Event){
 		fmt.Println("[CRITIAL] CASTING ERROR")
 	}
 	nodeLists:=this.gmsPtr.GetAllNodes()
+
+	ERR.Println(nodeLists)
+
 	var currPort string
 	this.voteRec=1 // votes for yourself
 
