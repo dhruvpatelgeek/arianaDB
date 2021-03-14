@@ -14,7 +14,7 @@ import (
 	"sync"
 	"time"
 )
-
+// raft module v2.2
 type node struct {
 	node_ip         string
 	timeoutMutex    sync.Mutex
