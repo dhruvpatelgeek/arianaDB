@@ -49,6 +49,7 @@ var CDprint=color.New(color.FgYellow)
 var FWprint=color.New(color.FgMagenta).Add(color.ReverseVideo)
 var Xprint=color.New(color.ReverseVideo)
 var RXprint=color.New(color.FgRed).Add(color.ReverseVideo)
+var ERR=color.New(color.FgYellow).Add(color.ReverseVideo)
 //-------------------------------------
 
 //INIT-----------------------------------------
@@ -239,6 +240,7 @@ func (this *node) incomingMsgReader(){
 	for{
 		select {
 		case msg=<-this.fromCoordinator:
+			ERR.Println(msg)
 			if(msg.Type=="PING"){
 				var newLeader =false
 				this.reset()
