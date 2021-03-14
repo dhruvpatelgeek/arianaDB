@@ -35,7 +35,7 @@ func New(hostIP string, hostPort string, gms *membership.MembershipService) *Rep
 func (rs *ReplicationService) GetMigrationRange(ipv4 string) (string, string) {
 	nodeHashInt := structure.HashKey(ipv4)
 
-	predecessor := rs.findPredecessorNode(nodeHashInt)
+	predecessor := rs.findPredecessorFromHash(nodeHashInt)
 
 	predecessorHashInt := structure.HashKey(predecessor)
 	migrationStart := big.NewInt(1)
@@ -45,11 +45,15 @@ func (rs *ReplicationService) GetMigrationRange(ipv4 string) (string, string) {
 }
 
 func (rs *ReplicationService) IsPredecessor(ipv4 string) bool {
-	predecessor := rs.findPredecessorNode(structure.HashKey(rs.hostIPv4))
+	predecessor := rs.findPredecessorFromHash(structure.HashKey(rs.hostIPv4))
 	return ipv4 == predecessor
 }
 
-func (rs *ReplicationService) findPredecessorNode(hash *big.Int) string {
+func (rs *ReplicationService) FindPredecessorNode(ipv4 string) string {
+	return rs.findPredecessorFromHash(structure.HashKey(rs.hostIPv4))
+}
+
+func (rs *ReplicationService) findPredecessorFromHash(hash *big.Int) string {
 	nodeList := rs.gms.GetAllNodes()
 
 	var responsibleNode string
