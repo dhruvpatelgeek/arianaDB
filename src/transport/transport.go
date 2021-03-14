@@ -663,6 +663,8 @@ func (tm *TransportModule) R2RSend(payload []byte,destAddr string){
 		Type:       "general",
 	}
 	addr, err := net.ResolveUDPAddr("udp", destAddr)
+	fmt.Println("SENDING MESSAGE......")
+	fmt.Println(send_payload)
 
 	if err != nil {
 		log.Println("Address error ", err)
