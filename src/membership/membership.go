@@ -334,13 +334,13 @@ func (gms *MembershipService) sendList(destination string) {
 func (gms *MembershipService) GetAllNodes() []string {
 	var allNodes []string
 
-	//gms.membersListLock.Lock()
+	gms.membersListLock.Lock()
 	for key, val := range gms.members {
 		if val.isAlive {
 			allNodes = append(allNodes, key)
 		}
 	}
-	//gms.membersListLock.Unlock()
+	gms.membersListLock.Unlock()
 
 	return allNodes
 }
