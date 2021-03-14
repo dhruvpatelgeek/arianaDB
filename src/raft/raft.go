@@ -240,7 +240,7 @@ func (this *node) incomingMsgReader(){
 	for{
 		select {
 		case msg=<-this.fromCoordinator:
-			ERR.Println(msg)
+
 			if(msg.Type=="PING"){
 				var newLeader =false
 				this.reset()
@@ -332,7 +332,7 @@ func (this *node) askForVotes(fsm_event *fsm.Event){
 	}
 	nodeLists:=this.gmsPtr.GetAllNodes()
 
-	ERR.Println(nodeLists)
+
 
 	var currPort string
 	this.voteRec=1 // votes for yourself

@@ -622,10 +622,10 @@ func (tm *TransportModule) SendCoordinatorToCoordinator(payload []byte, messageI
 func (tm *TransportModule) R2R_daemon() {
 
 	for {
-		fmt.Println("[CASTED R2R READER INIT]")
+
 		buffer := make([]byte, 20100)
 		n, _, err := tm.R2Rconnection.ReadFromUDP(buffer)
-		fmt.Println("[CASTED R2R READER INIT]",n)
+
 		for err != nil {
 			fmt.Println("listener failed - ", err)
 		}
@@ -636,7 +636,6 @@ func (tm *TransportModule) R2R_daemon() {
 			Type:       "",
 		}
 		err = proto.Unmarshal(buffer[:n], casted_R2R)
-		fmt.Println("[CASTED R2R READER INIT {{{READ}}}]",casted_R2R)
 		if(err!=nil){
 			fmt.Println("[R2R CASITNG ERROR shell]",err,buffer[:n])
 		}
@@ -649,7 +648,6 @@ func (tm *TransportModule) R2R_daemon() {
 			if(err!=nil){
 				fmt.Println("[R2R CASITNG ERROR payload]")
 			}
-			fmt.Println("[CASTED R2R READER INIT {{{WRITNG TO CHAN}}}]",*raftPayload)
 			tm.raftChan<-*raftPayload
 		}
 	}
