@@ -60,6 +60,8 @@ type StorageModule struct {
 	kvsLock *sync.Mutex
 	tm      *transport.TransportModule
 
+	// TODO: consider making this a channel of pointers to prevent copying protobufs with inherent mutex
+	// when popping from channel and passing as arguments to functions
 	coordinatorToStorageChannel chan protobuf.InternalMsg
 	transportToStorageChannel   chan protobuf.InternalMsg
 }
@@ -96,14 +98,18 @@ func (sm *StorageModule) processCoordinatorMessages() {
 		request := <-sm.coordinatorToStorageChannel
 		command := request.GetCommand()
 		switch constants.InternalMessageCommands(command) {
+<<<<<<< HEAD
 		case constants.ProcessClientKVRequest:
 			err := sm.processClientKVRequest(request)
+=======
+		case constants.ProcessKVRequest:
+			err := sm.processKVRequest(&request)
+>>>>>>> cf0aa45750d1c7704d9ad98b82409c0fcb15f968
 			if err != nil {
 				fmt.Errorf("", err)
 			}
 		case constants.ProcessKeyMigrationRequest:
-			fmt.Println("Received ProcessKeyMigrationRequest command in storage")
-			err := sm.processKeyMigrationRequest(request)
+			err := sm.processKeyMigrationRequest(&request)
 			if err != nil {
 				fmt.Errorf("", err)
 			}
@@ -118,7 +124,11 @@ func (sm *StorageModule) processCoordinatorMessages() {
 // @Description: peals the seconday message layer and performs server functions returns the genarated payload
 // @param message
 // @return []byte
+<<<<<<< HEAD
 func (sm *StorageModule) processClientKVRequest(request protobuf.InternalMsg) error {
+=======
+func (sm *StorageModule) processKVRequest(request *protobuf.InternalMsg) error {
+>>>>>>> cf0aa45750d1c7704d9ad98b82409c0fcb15f968
 	cast_req := &protobuf.KVRequest{}
 	err := proto.Unmarshal(request.KVRequest, cast_req)
 	if err != nil {
@@ -245,7 +255,7 @@ func (sm *StorageModule) wipeout() uint32 {
 	return OK
 }
 
-func (sm *StorageModule) processKeyMigrationRequest(request protobuf.InternalMsg) error {
+func (sm *StorageModule) processKeyMigrationRequest(request *protobuf.InternalMsg) error {
 	// TODO: process key migration request
 	// extract lowerbound, upperbound, destination address & convert to appropriate
 	destination := request.GetMigrationDestinationAddress()
