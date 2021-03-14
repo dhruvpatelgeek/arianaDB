@@ -637,7 +637,7 @@ func (tm *TransportModule) R2R_daemon() {
 		if(err!=nil){
 			fmt.Println("[R2R CASITNG ERROR shell]",err,buffer[:n])
 		}
-
+		fmt.Println("[CASTED R2R]",casted_R2R)
 		if string(casted_R2R.Checksum)!= strconv.FormatUint(calculate_checksum(casted_R2R.Message_ID, casted_R2R.Payload), 10) {
 			fmt.Println("[CHECKSUM ERR R2R]")
 		} else {
