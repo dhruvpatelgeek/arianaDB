@@ -636,7 +636,7 @@ func (tm *TransportModule) R2R_daemon() {
 			Type:       "",
 		}
 		err = proto.Unmarshal(buffer[:n], casted_R2R)
-		fmt.Println("[CASTED R2R READER INIT]",casted_R2R)
+		fmt.Println("[CASTED R2R READER INIT {{{READ}}}]",casted_R2R)
 		if(err!=nil){
 			fmt.Println("[R2R CASITNG ERROR shell]",err,buffer[:n])
 		}
@@ -666,8 +666,8 @@ func (tm *TransportModule) R2RSend(payload []byte,destAddr string){
 		Type:       "general",
 	}
 	addr, err := net.ResolveUDPAddr("udp", destAddr)
-	fmt.Println("SENDING MESSAGE......")
-	fmt.Println(send_payload)
+	//fmt.Println("SENDING MESSAGE......")
+	//fmt.Println(send_payload)
 
 	if err != nil {
 		log.Println("Address error ", err)
