@@ -1,0 +1,10 @@
+syntax = "proto3";
+package protobuf;
+option go_package = "pb/protobuf";
+
+message RaftShell {
+  bytes message_ID =1;//UUIDV4
+  bytes checksum=2; //crcIEEE
+  bytes payload=3;
+  string type=4;//"requesting_a_vote","leader_ping","vote(accept/reject)",KV replication request
+}

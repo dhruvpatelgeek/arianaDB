@@ -1,6 +1,7 @@
 package transport
 
 import (
+	guuid "github.com/google/uuid"
 	"dht/google_protocol_buffer/pb/protobuf"
 	"dht/src/constants"
 	"errors"
@@ -24,33 +25,6 @@ import (
 //https://stackoverflow.com/questions/27625787/measuring-memory-usage-of-executable-run-using-golang
 //https://stackoverflow.com/questions/31879817/golang-os-exec-realtime-memory-usage
 //https://golangcode.com/print-the-current-memory-usage/
-
-/*
- * ARCHITECTURE---------------------------------------------
- * ┌────────────────────────────────────────────────────────┐
- * │                                                        │
- * │         Transport layer                                │
- * │                                                        │
- * │                                                        │
- * │     UDP connetion(atmost once)   TCP connection        │
- * │                                                        │
- * │      proto.MSG object            server to server      │
- * │                                                        │
- * │                                  WRAPPER               │
- * │                                                        │
- * │    ┌─────────────────┐         ┌────────────────────┐  │
- * │    │                 │         │                    │  │
- * │    │   Server to     │         │   Server to        │  │
- * │    │                 │         │                    │  │
- * │    │    Client       │         │     Server         │  │
- * │    └───────────────┬─┘         └────────────────┬───┘  │
- * │        PORT 7262   │                 PORT 7272  │      │
- * └──────────────▲─────┼─────────────────────▲──────┼──────┘
- *                │     │                     │      │
- *                │     │                     │      │
- *                      ▼                     		 ▼
- *
- */
 
 // memory debugger
 var numStorageMessages = 0
@@ -81,10 +55,12 @@ type Message struct {
 type TransportModule struct {
 	connection                 *net.UDPConn
 	storageToStorageConnection *net.TCPListener
+	R2Rconnection   		    *net.UDPConn
 
 	heartbeatChanel chan []byte
 	coodinatorChan  chan protobuf.InternalMsg
 	storageChannel  chan protobuf.InternalMsg
+	raftChan chan protobuf.RaftPayload
 
 	hostIP               string
 	clientToServerPort   string
@@ -93,7 +69,7 @@ type TransportModule struct {
 }
 
 // initilaizes the transport layer
-func New(ip string, clientToServerPort int, gmsChan chan []byte, coordinatorChannel chan protobuf.InternalMsg, storageChannel chan protobuf.InternalMsg) (*TransportModule, error) {
+func New(ip string, clientToServerPort int, gmsChan chan []byte, coordinatorChannel chan protobuf.InternalMsg, storageChannel chan protobuf.InternalMsg,raftChan chan protobuf.RaftPayload) (*TransportModule, error) {
 	tm := &TransportModule{}
 	if !validPort(clientToServerPort) {
 		return tm, nil
@@ -103,13 +79,15 @@ func New(ip string, clientToServerPort int, gmsChan chan []byte, coordinatorChan
 	tm.clientToServerPort = strconv.Itoa(clientToServerPort)
 	tm.storageToStoragePort = strconv.Itoa(clientToServerPort + 1)
 	tm.hostIPv4 = ip + ":" + tm.storageToStoragePort
-
+	R2R_PORT := clientToServerPort + 2
+	r2rconn:=createUDPConnection(ip,R2R_PORT)
 	tm.connection = createUDPConnection(ip, clientToServerPort)
 	tm.storageToStorageConnection = createTCPConnection(ip, tm.storageToStoragePort) // TODO: wtf is this?
-
+	tm.R2Rconnection=r2rconn
 	tm.coodinatorChan = coordinatorChannel
 	tm.heartbeatChanel = gmsChan
 	tm.storageChannel = storageChannel
+	tm.raftChan=raftChan
 	go tm.bootstrap()
 
 	// TODO: listen to TCP
@@ -313,6 +291,7 @@ func (tm *TransportModule) bootstrap() {
 
 	go tm.UDP_daemon()
 	go tm.processStorageToStorageMessages() // TODO: come up with better names for these daemons...
+	go tm.R2R_daemon()
 }
 
 //for debug to view packet b4 sending
@@ -636,3 +615,62 @@ func (tm *TransportModule) SendCoordinatorToCoordinator(payload []byte, messageI
 
 	tm.connection.WriteToUDP(message, addr)
 }
+
+//RAFT FUNCTIONS---------------------------------------------------------
+
+// a udp background function that reads the udp  byte buffer and calls the router
+func (tm *TransportModule) R2R_daemon() {
+
+	for {
+		buffer := make([]byte, 20100)
+		n, _, err := tm.R2Rconnection.ReadFromUDP(buffer)
+		for err != nil {
+			fmt.Println("listener failed - ", err)
+		}
+		casted_R2R:=&protobuf.RaftShell{
+			Message_ID: nil,
+			Checksum:   nil,
+			Payload:    nil,
+			Type:       "",
+		}
+		err = proto.Unmarshal(buffer[:n], casted_R2R)
+		if(err!=nil){
+			fmt.Println("[R2R CASITNG ERROR shell]",err,buffer[:n])
+		}
+
+		if string(casted_R2R.Checksum)!= strconv.FormatUint(calculate_checksum(casted_R2R.Message_ID, casted_R2R.Payload), 10) {
+			fmt.Println("[CHECKSUM ERR R2R]")
+		} else {
+			raftPayload:=&protobuf.RaftPayload{}
+			err = proto.Unmarshal(casted_R2R.Payload, raftPayload)
+			if(err!=nil){
+				fmt.Println("[R2R CASITNG ERROR payload]")
+			}
+			tm.raftChan<-*raftPayload
+		}
+	}
+
+}
+
+func (tm *TransportModule) R2RSend(payload []byte,destAddr string){
+	id := guuid.New()
+	messageID:=[]byte(id.String())
+
+	send_payload:=&protobuf.RaftShell{
+		Message_ID: messageID,
+		Checksum:   []byte(strconv.FormatUint(calculate_checksum(messageID, payload), 10)),
+		Payload:    payload,
+		Type:       "general",
+	}
+	addr, err := net.ResolveUDPAddr("udp", destAddr)
+
+	if err != nil {
+		log.Println("Address error ", err)
+	}
+	marshalled_send_payload,err:=proto.Marshal(send_payload)
+	if(err!=nil){
+		fmt.Println("[CRITICAL] Casting error R2RSend")
+	}
+	tm.connection.WriteToUDP(marshalled_send_payload,addr )
+}
+//--------------------------------------------------------------------------

@@ -1,0 +1,14 @@
+syntax = "proto3";
+package protobuf;
+option go_package = "pb/protobuf";
+
+message RaftPayload {
+  string type=1;//"requesting_a_vote","leader_ping","vote(accept/reject)",KV replication request
+  string senderIP=2;
+  string voteRes=3; // accept or reject the vote request "ACCEPT","REJECT"
+  int32 SenderTermsCompleted=4; // so if the sender has serverd less terms than you
+  // you dont vote for him
+  //else you do
+  int32 termNum=5; // the current election term
+  bytes  log=6;// the complete state of the system to be set by the leader
+}

@@ -52,7 +52,8 @@ type CoordinatorService struct {
 	incomingMessagesChannel chan protobuf.InternalMsg
 	toStorageChannel        chan protobuf.InternalMsg
 	toReplicationChannel    chan structure.GMSEventMessage
-
+	toRaftChan 				chan protobuf.RaftPayload
+	transport_raft			chan protobuf.RaftPayload
 	transport          *transport.TransportModule
 	replicationService *replication.ReplicationService
 
@@ -66,6 +67,8 @@ func New(
 	transportToCoordinatorChannel chan protobuf.InternalMsg,
 	coordinatorToStorageChannel chan protobuf.InternalMsg,
 	coordinatorToReplicationChannel chan structure.GMSEventMessage,
+	coordinatorToRaftChan chan protobuf.RaftPayload,
+	transportToCoordinatorChannel_RAFT chan protobuf.RaftPayload,
 
 	transport *transport.TransportModule,
 	replicationService *replication.ReplicationService,
@@ -78,6 +81,10 @@ func New(
 	coordinator.incomingMessagesChannel = transportToCoordinatorChannel
 	coordinator.toStorageChannel = coordinatorToStorageChannel
 	coordinator.toReplicationChannel = coordinatorToReplicationChannel
+
+	// for the raft protocol------------------------------
+	coordinator.transport_raft=transportToCoordinatorChannel_RAFT
+	coordinator.toRaftChan=coordinatorToRaftChan
 
 	coordinator.transport = transport
 	coordinator.replicationService = replicationService
@@ -150,4 +157,15 @@ func (coordinator *CoordinatorService) processGMSEvent() {
 	}
 }
 
+func (coordinator *CoordinatorService) processRaftMessages(){
+	// simply forward it to the raft module
+	for{
+		messageForRaft:= protobuf.RaftPayload{}
+		select {
+		case messageForRaft=<-coordinator.transport_raft:
+			coordinator.toRaftChan<-messageForRaft;
+		}
+	}
+
+}
 

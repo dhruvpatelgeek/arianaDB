@@ -5,6 +5,7 @@ import (
 	"dht/google_protocol_buffer/pb/protobuf"
 	"dht/src/coordinator"
 	"dht/src/membership"
+	"dht/src/raft"
 	"dht/src/replication"
 	"dht/src/storage"
 	"dht/src/structure"
@@ -36,13 +37,14 @@ func main() {
 	transportToStorageChannel := make(chan protobuf.InternalMsg, 20)
 	coordinatorToStorageChannel := make(chan protobuf.InternalMsg, 20)
 	coordinatorToReplicationChannel := make(chan structure.GMSEventMessage, 20)
-
+	transportToCoordinatorChannel_RAFT:=make(chan protobuf.RaftPayload)
+	coordinatorToRaftChannel:=make(chan protobuf.RaftPayload)
 	// get info about self
 	containerHostname := getOutboundIP().String()
 
 	// initialize transport layer
 	portInt, _ := strconv.Atoi(port)
-	transport, err := transport.New(containerHostname, portInt, gmsChannel, transportToCoordinatorChannel, transportToStorageChannel)
+	transport, err := transport.New(containerHostname, portInt, gmsChannel, transportToCoordinatorChannel, transportToStorageChannel,transportToCoordinatorChannel_RAFT)
 	if err != nil {
 		log.Fatal("Failed to initialize transport layer.", err)
 		panic("Error when creating transport layer. Abort creating server.")
@@ -61,10 +63,21 @@ func main() {
 	// initialize replicationService
 	replicationService := replication.New(containerHostname, port, gms)
 
+	//initialize the raft service
+	raft.New(gms,transport,containerHostname,portInt,coordinatorToRaftChannel)
+
 	// initialize coordinator service
-	_, err = coordinator.New(gmsToCoordinatorChannel, transportToCoordinatorChannel, coordinatorToStorageChannel, coordinatorToReplicationChannel,
-		transport, replicationService,
-		containerHostname, port)
+	_, err = coordinator.New(
+		gmsToCoordinatorChannel,
+		transportToCoordinatorChannel,
+		coordinatorToStorageChannel,
+		coordinatorToReplicationChannel,
+		coordinatorToRaftChannel,
+		transportToCoordinatorChannel_RAFT,
+		transport,
+		replicationService,
+		containerHostname,
+		port)
 	if err != nil {
 		log.Fatal("Failed to initialize CoordinatorService", err)
 		panic("Error when creating coordinator. Abort node initialization")
