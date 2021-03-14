@@ -38,7 +38,7 @@ type node struct {
 // TIMER VARIABLES---------------------
 //maximum netowkr down time is 20 seconds
 var MIN_TIME = 2
-var MAX_TIME = 5
+var MAX_TIME = 10
 var REFRESH_RATE =500*time.Millisecond
 var NETWORK_DELAY=1
 var GAIN=1*time.Second
@@ -192,12 +192,12 @@ func (this *node) candidateFunc(fsm_event *fsm.Event) {
 func (this *node) leaderFunc(fsm_event *fsm.Event) {
 	LDprint.Println("[LEADER NODE]")
 	LDprint.Println("[OUTBOUND]->PINGING")
+	LDprint.Println(" TERM",this.termNum,">>",this.FSM.Current())
 	for{
 		if(this.FSM.Is("leader")){
 			this.pingAllNodes(fsm_event)
 			ttSleep:=MIN_TIME-NETWORK_DELAY
 			sleep_time:=time.Duration(ttSleep)*time.Second
-			LDprint.Println(sleep_time," TERM",this.termNum,">>",this.FSM.Current())
 			time.Sleep(sleep_time)
 		} else{
 			LDprint.Println("[LEADER REVERT]")
