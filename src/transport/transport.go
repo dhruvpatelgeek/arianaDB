@@ -649,6 +649,7 @@ func (tm *TransportModule) R2R_daemon() {
 			if(err!=nil){
 				fmt.Println("[R2R CASITNG ERROR payload]")
 			}
+			fmt.Println("[CASTED R2R READER INIT {{{WRITNG TO CHAN}}}]",*raftPayload)
 			tm.raftChan<-*raftPayload
 		}
 	}
