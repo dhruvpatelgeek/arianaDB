@@ -5,9 +5,52 @@ option go_package = "pb/protobuf";
 message InternalMsg {
   bytes messageID = 1;
   uint32 command = 2;
+  
+  // for client kv requests
   optional string clientAddress = 3;
   optional bytes kVRequest = 4;
-  optional string migrationRangeLowerbound = 5;
-  optional string migrationRangeUpperbound = 6;
-  optional string migrationDestinationAddress = 7;
+
+  /*  Propagation:
+    - after commiting on the head node, the head node wil lcreate the following message:
+      1. clientAddress: string
+      2. command: ProcessPropagatedKVRequest
+      3. response to client: false
+      4. table selection: middle
+      5. kvRequest
+      6. messageID from the client will be identical (TODO: make sure this is the case)
+    
+    - middle node receives that request:
+      1. unpack, check the command, and do stuff (commit, rs: where to send next)
+      2. send a forward request with:
+        1. clientAddress: string
+        2. command: ProcessPropagatedKVRequest
+        3. response to client: true
+        4. table selection: tail
+        5. kvRequest
+        6. messageID from the client will be identical (TODO: make sure this is the case)
+
+    - tail node receives that request:
+      1. unpack, check the command, and do stuff (commit, rs: where to send next)
+        - coordinator doesn't have to do anything because when it forwards the request to storage,
+        - storage will check if response is required & send a respone to the client.
+  */  optional bool respondToClient = 5;
+  optional uint32 originatingNodeTable = 6;
+
+  /*  key migration & table migration generalized messages: 
+    - coordinator creates and sends an internal message to storage:
+			1.	MessageID: structure.GenerateMessageID(),
+			2.	Command: uint32(constants.ProcessKeyMigrationRequest),
+			3.	MigrationRangeLowerbound: &lowerBound,
+			4.	MigrationRangeUpperbound: &upperBound,
+			5.	MigrationDestinationAddress: &(gmsEventMessage.Node)
+
+    6. originating node's table (head, middle, tail)
+    7. destination node's table (head, middle, tail)
+    8. TODO: intelligently set lowerbound & upperbound so that it migrates the entire table
+      - if lowerbound == upperbound, migrate the entire table
+  */
+  optional string migrationRangeLowerbound = 7;
+  optional string migrationRangeUpperbound = 8;
+  optional string migrationDestinationAddress = 9;
+  optional uint32 destinationNodeTable = 10;
 }

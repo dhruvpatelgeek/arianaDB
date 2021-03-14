@@ -96,8 +96,8 @@ func (sm *StorageModule) processCoordinatorMessages() {
 		request := <-sm.coordinatorToStorageChannel
 		command := request.GetCommand()
 		switch constants.InternalMessageCommands(command) {
-		case constants.ProcessKVRequest:
-			err := sm.processKVRequest(request)
+		case constants.ProcessClientKVRequest:
+			err := sm.processClientKVRequest(request)
 			if err != nil {
 				fmt.Errorf("", err)
 			}
@@ -118,7 +118,7 @@ func (sm *StorageModule) processCoordinatorMessages() {
 // @Description: peals the seconday message layer and performs server functions returns the genarated payload
 // @param message
 // @return []byte
-func (sm *StorageModule) processKVRequest(request protobuf.InternalMsg) error {
+func (sm *StorageModule) processClientKVRequest(request protobuf.InternalMsg) error {
 	cast_req := &protobuf.KVRequest{}
 	err := proto.Unmarshal(request.KVRequest, cast_req)
 	if err != nil {

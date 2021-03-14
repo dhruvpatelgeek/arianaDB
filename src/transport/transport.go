@@ -432,7 +432,7 @@ func (tm *TransportModule) clientReq(payload []byte, messageID []byte, clientAdd
 			ClientAddress: &clientAddr,
 			KVRequest:     payload,
 			MessageID:     messageID,
-			Command:       uint32(constants.ProcessKVRequest), // TODO: unable
+			Command:       uint32(constants.ProcessClientKVRequest), // TODO: unable
 		}
 
 		tm.coodinatorChan <- internal_message_obj
