@@ -37,8 +37,8 @@ type node struct {
 
 // TIMER VARIABLES---------------------
 //maximum netowkr down time is 20 seconds
-var MIN_TIME = 4
-var MAX_TIME = 18
+var MIN_TIME = 2
+var MAX_TIME = 5
 var REFRESH_RATE =500*time.Millisecond
 var NETWORK_DELAY=1
 var GAIN=1*time.Second
