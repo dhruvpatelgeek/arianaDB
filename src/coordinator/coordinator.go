@@ -96,7 +96,7 @@ func New(
 	// bootstrap worker threads for processing incoming messages & gms events
 	go coordinator.processIncomingMessages()
 	go coordinator.processGMSEvent()
-
+	go coordinator.processRaftMessages()
 	return coordinator, nil
 }
 
