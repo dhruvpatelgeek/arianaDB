@@ -42,7 +42,9 @@ type raftnode struct {
 	netMapMutex sync.Mutex
 	/*
 	JOINED -> node just joined
+
 	LEFT -> node failed
+	-----------------------------
 	COMMIT -> node added to network
 	 */
 	netMap map[string]string
