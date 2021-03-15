@@ -4,6 +4,7 @@ import (
 	"dht/google_protocol_buffer/pb/protobuf"
 	"dht/src/constants"
 	"dht/src/replication"
+	"dht/src/storage"
 	"dht/src/structure"
 	"dht/src/transport"
 	"fmt"
@@ -56,6 +57,7 @@ type CoordinatorService struct {
 	transport_raft          chan protobuf.RaftPayload
 	transport               *transport.TransportModule
 	replicationService      *replication.ReplicationService
+	storageService          *storage.StorageService
 
 	hostIP   string
 	hostPort string
@@ -72,6 +74,7 @@ func New(
 
 	transport *transport.TransportModule,
 	replicationService *replication.ReplicationService,
+	storageService *storage.StorageService,
 
 	hostIP string,
 	hostPort string) (*CoordinatorService, error) {
@@ -88,6 +91,7 @@ func New(
 
 	coordinator.transport = transport
 	coordinator.replicationService = replicationService
+	coordinator.storageService = storageService
 
 	coordinator.hostIP = hostIP
 	coordinator.hostPort = hostPort
@@ -142,21 +146,15 @@ func (coordinator *CoordinatorService) processGMSEvent() {
 	for {
 		gmsEventMessage := <-coordinator.gmsEventChannel
 		if gmsEventMessage.IsJoined && coordinator.replicationService.IsPredecessor(gmsEventMessage.Node) {
+			destination := gmsEventMessage.Node
+			lowerbound, upperbound := coordinator.replicationService.GetMigrationRange(gmsEventMessage.Node)
 
-			lowerBound, upperBound := coordinator.replicationService.GetMigrationRange(gmsEventMessage.Node)
-
-			originatingTable := uint32(constants.Head)
-			destinationTable := uint32(constants.Middle)
-			toStorage := protobuf.InternalMsg{
-				MessageID:                   structure.GenerateMessageID(),
-				Command:                     uint32(constants.ProcessKeyMigrationRequest),
-				OriginatingNodeTable:        &originatingTable,
-				DestinationNodeTable:        &destinationTable,
-				MigrationDestinationAddress: &(gmsEventMessage.Node),
-				MigrationRangeLowerbound:    &lowerBound,
-				MigrationRangeUpperbound:    &upperBound,
+			originatingTable := constants.Head
+			destinationTable := constants.Middle
+			err := coordinator.storageService.MigratePartialTable(destination, originatingTable, destinationTable, lowerbound, upperbound)
+			if err != nil {
+				fmt.Printf("[Coordinator] Failed to migrate partial table. Caused by: \n\t%s \n", err.Error())
 			}
-			coordinator.toStorageChannel <- toStorage
 		}
 	}
 }

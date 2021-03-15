@@ -37,34 +37,34 @@ func main() {
 	transportToStorageChannel := make(chan protobuf.InternalMsg, 20)
 	coordinatorToStorageChannel := make(chan protobuf.InternalMsg, 20)
 	coordinatorToReplicationChannel := make(chan structure.GMSEventMessage, 20)
-	transportToCoordinatorChannel_RAFT:=make(chan protobuf.RaftPayload)
-	coordinatorToRaftChannel:=make(chan protobuf.RaftPayload)
+	transportToCoordinatorChannel_RAFT := make(chan protobuf.RaftPayload)
+	coordinatorToRaftChannel := make(chan protobuf.RaftPayload)
 	// get info about self
 	containerHostname := getOutboundIP().String()
 
 	// initialize transport layer
 	portInt, _ := strconv.Atoi(port)
-	transport, err := transport.New(containerHostname, portInt, gmsChannel, transportToCoordinatorChannel, transportToStorageChannel,transportToCoordinatorChannel_RAFT)
+	transportService, err := transport.New(containerHostname, portInt, gmsChannel, transportToCoordinatorChannel, transportToStorageChannel, transportToCoordinatorChannel_RAFT)
 	if err != nil {
 		log.Fatal("Failed to initialize transport layer.", err)
 		panic("Error when creating transport layer. Abort creating server.")
 	}
 
 	// initialize group membership service
-	gms, err := membership.New(initialMembers, transport, gmsChannel, containerHostname, port, gmsToCoordinatorChannel)
+	gms, err := membership.New(initialMembers, transportService, gmsChannel, containerHostname, port, gmsToCoordinatorChannel)
 	if err != nil {
 		log.Fatal("Failed to initialize GMS.", err)
 		panic("Error when creating gms. Abort creating server.")
 	}
 
 	// initialize storage service
-	storage.New(transport, coordinatorToStorageChannel, transportToStorageChannel)
+	storageService := storage.New(transportService, gms, coordinatorToStorageChannel, transportToStorageChannel)
 
 	// initialize replicationService
 	replicationService := replication.New(containerHostname, port, gms)
 
 	//initialize the raft service
-	raft.New(gms,transport,containerHostname,portInt,coordinatorToRaftChannel)
+	raft.New(gms, transportService, containerHostname, portInt, coordinatorToRaftChannel)
 
 	// initialize coordinator service
 	_, err = coordinator.New(
@@ -74,8 +74,11 @@ func main() {
 		coordinatorToReplicationChannel,
 		coordinatorToRaftChannel,
 		transportToCoordinatorChannel_RAFT,
-		transport,
+
+		transportService,
 		replicationService,
+		storageService,
+
 		containerHostname,
 		port)
 	if err != nil {

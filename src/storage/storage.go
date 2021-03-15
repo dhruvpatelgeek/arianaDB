@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"dht/src/constants"
+	"dht/src/membership"
 	"dht/src/structure"
 	"dht/src/transport"
 
@@ -48,7 +49,7 @@ const UNKWN_CMD = 5
 const INV_KEY = 6
 const INV_VAL = 7
 
-type StorageModule struct {
+type StorageService struct {
 	// replicated kv stores
 	headKVStore     map[string][]byte
 	headKVStoreLock *sync.Mutex
@@ -59,7 +60,8 @@ type StorageModule struct {
 	tailKVStore     map[string][]byte
 	tailKVStoreLock *sync.Mutex
 
-	tm *transport.TransportModule
+	tm  *transport.TransportModule
+	gms *membership.MembershipService
 
 	// TODO: consider making this a channel of pointers to prevent copying protobufs with inherent mutex
 	// when popping from channel and passing as arguments to functions
@@ -67,16 +69,13 @@ type StorageModule struct {
 	transportToStorageChannel   chan protobuf.InternalMsg
 }
 
-// @Description: Initializes a new storage module
-// @param tm - transport module that sends requests to the storage module
-// @param reqFrom_tm - channel that transport module send requests on
-// @param gms - group membership service that gives the nodes in the network
-// @return *StorageModule
 func New(tm *transport.TransportModule,
-	coordinatorToStorageChannel chan protobuf.InternalMsg,
-	transportToStorageChannel chan protobuf.InternalMsg) *StorageModule {
+	gms *membership.MembershipService,
 
-	sm := StorageModule{
+	coordinatorToStorageChannel chan protobuf.InternalMsg,
+	transportToStorageChannel chan protobuf.InternalMsg) *StorageService {
+
+	sm := StorageService{
 		headKVStore:     make(map[string][]byte),
 		headKVStoreLock: &sync.Mutex{},
 
@@ -86,19 +85,20 @@ func New(tm *transport.TransportModule,
 		tailKVStore:     make(map[string][]byte),
 		tailKVStoreLock: &sync.Mutex{},
 
-		tm: tm,
+		tm:  tm,
+		gms: gms,
 
 		coordinatorToStorageChannel: coordinatorToStorageChannel,
 		transportToStorageChannel:   transportToStorageChannel,
 	}
 	go sm.processStorageToStorageMessages()
 	go sm.processCoordinatorMessages()
-	//go sm.monitorKVStoreSize()
+	// go sm.monitorKVStoreSize()
 
 	return &sm
 }
 
-func (sm *StorageModule) processStorageToStorageMessages() {
+func (sm *StorageService) processStorageToStorageMessages() {
 	for {
 		message := <-sm.transportToStorageChannel
 		messageID := string(message.GetMessageID())
@@ -139,23 +139,11 @@ func (sm *StorageModule) processStorageToStorageMessages() {
 	}
 }
 
-func (sm *StorageModule) processCoordinatorMessages() {
+func (sm *StorageService) processCoordinatorMessages() {
 	for {
 		request := <-sm.coordinatorToStorageChannel
 		command := request.GetCommand()
 		switch constants.InternalMessageCommands(command) {
-		case constants.ProcessKeyMigrationRequest:
-			err := sm.processKeyMigrationRequest(&request)
-			if err != nil {
-				fmt.Printf("[Storage] Failed to process KeyMigrationRequest (%s)\n", err)
-			}
-
-		case constants.ProcessTableMigrationRequest:
-			err := sm.processTableMigrationRequest(&request)
-			if err != nil {
-				fmt.Printf("[Storage] Failed to process TableMigrationRequest (%s)\n", err)
-			}
-
 		case constants.ProcessPropagatedKVRequest:
 			err := sm.processPropagatedKVRequest(&request)
 			if err != nil {
@@ -173,18 +161,30 @@ func (sm *StorageModule) processCoordinatorMessages() {
 	}
 }
 
-func (sm *StorageModule) processKeyMigrationRequest(request *protobuf.InternalMsg) error {
-	// extract lowerbound, upperbound, destination address & convert to appropriate
-	destination := request.GetMigrationDestinationAddress()
+/**
+MigratePartialTable is a thread-safe function which blocks the caller until the subset of the keys are migrated to the destination.
+
+MigrateTable assumes the destination is valid and the destinationTable is valid.
+
+The subset of keys to be migrated in the originating table is defined by the migrationRangeLowerbound and migrationRangeUpperbound.
+1. If migrationRangeLowerbound < migrationRangeUpperbound, we will migrate keys within [migrationRangeLowerbound, migrationRangeUpperbound].
+2. If migrationRangeLowerbound > migrationRangeUpperbound (i.e.: wrapped around), we will migrate keys not in [migrationRangeLowerbound, migrationRangeUpperbound].
+
+If a key fails to transfer to the destination table during table migration, it will be deleted from the local
+copy and continue migrating the remaining keys. This failure may result in loss of keys.
+*/
+func (sm *StorageService) MigratePartialTable(destination string,
+	originatingTable constants.TableSelection, destinationTable constants.TableSelection,
+	migrationRangeLowerbound string, migrationRangeUpperbound string) error {
 
 	lowerbound := new(big.Int)
-	_, success := lowerbound.SetString(request.GetMigrationRangeLowerbound(), 10)
+	_, success := lowerbound.SetString(migrationRangeLowerbound, 10)
 	if !success {
 		return errors.New("Storage: Failed to convert the lowerbound from string to big.int while processing migrating request. Ignoring.")
 	}
 
 	upperbound := new(big.Int)
-	_, success = upperbound.SetString(request.GetMigrationRangeUpperbound(), 10)
+	_, success = upperbound.SetString(migrationRangeUpperbound, 10)
 	if !success {
 		return errors.New("Storage: Failed to convert the upperbound from string to big.int while processing migrating request. Ignoring.")
 	}
@@ -192,17 +192,13 @@ func (sm *StorageModule) processKeyMigrationRequest(request *protobuf.InternalMs
 	// the new node's range is wrapped around if upperbound < lowerbound
 	isWrapAround := upperbound.Cmp(lowerbound) == -1 // note: x.Cmp(y) returns -1 if x < y
 
-	// get request's table selections
-	originatingTable := constants.TableSelection(request.GetOriginatingNodeTable())
-	destinationTable := constants.TableSelection(request.GetDestinationNodeTable())
-
 	// get selected kvStore & its lock
 	kvStore, kvStoreLock, err := sm.getKVStore(originatingTable)
 	if err != nil {
-		return nil
+		return err
 	}
 
-	kvStoreLock.Lock()
+	kvStoreLock.Lock() // TODO: consider grabbing the lock sooner to prevent table modification
 	for key, value := range kvStore {
 		hashedKey := structure.HashKey(key)
 		switch isWrapAround {
@@ -213,7 +209,7 @@ func (sm *StorageModule) processKeyMigrationRequest(request *protobuf.InternalMs
 				// migrate keys
 				err := sm.migrateKey(kvStore, key, value, destination, destinationTable)
 				if err != nil {
-					fmt.Println("[Storage] Failed to migrate key.", err.Error())
+					fmt.Println("[Storage] Failed to migrate key during partial table migration.", err.Error())
 				}
 			}
 		case true:
@@ -223,7 +219,7 @@ func (sm *StorageModule) processKeyMigrationRequest(request *protobuf.InternalMs
 				// migrate keys
 				err := sm.migrateKey(kvStore, key, value, destination, destinationTable)
 				if err != nil {
-					fmt.Println("[Storage] Failed to migrate key.", err.Error())
+					fmt.Println("[Storage] Failed to migrate key during partial table migration.", err.Error())
 				}
 			}
 		}
@@ -234,7 +230,7 @@ func (sm *StorageModule) processKeyMigrationRequest(request *protobuf.InternalMs
 	return nil
 }
 
-func (sm *StorageModule) getKVStore(tableSelection constants.TableSelection) (map[string][]byte, *sync.Mutex, error) {
+func (sm *StorageService) getKVStore(tableSelection constants.TableSelection) (map[string][]byte, *sync.Mutex, error) {
 	switch tableSelection {
 	case constants.Head:
 		return sm.headKVStore, sm.headKVStoreLock, nil
@@ -248,7 +244,7 @@ func (sm *StorageModule) getKVStore(tableSelection constants.TableSelection) (ma
 }
 
 // ASSUMES callee already holds the lock to sm.kvStore
-func (sm *StorageModule) migrateKey(
+func (sm *StorageService) migrateKey(
 	kvStore map[string][]byte,
 	key string, value []byte,
 	destination string, destinationTable constants.TableSelection) error {
@@ -267,32 +263,42 @@ func (sm *StorageModule) migrateKey(
 	return nil
 }
 
-func (sm *StorageModule) processTableMigrationRequest(request *protobuf.InternalMsg) error {
-	// extract destination address
-	destination := request.GetMigrationDestinationAddress()
+/**
+MigrateTable is a thread-safe function which blocks the caller until the destination table is wiped
+and the originating table is migrated to the destination table.
 
-	// get request's table selections
-	originatingTable := constants.TableSelection(request.GetOriginatingNodeTable())
-	destinationTable := constants.TableSelection(request.GetDestinationNodeTable())
+MigrateTable assumes the destination is valid and the destinationTable is valid.
+
+MigrateTable will abort the table migration if:
+1. an invaliad originating table is chosen.
+1. it is unable to wipe out the destination table.
+
+If a key fails to transfer to the destination table during table migration, it will be deleted from the local
+copy and continue migrating the remaining keys. This failure may result in loss of keys.
+*/
+func (sm *StorageService) MigrateTable(destination string,
+	originatingTable constants.TableSelection,
+	destinationTable constants.TableSelection) error {
 
 	// get selected kvStore & its lock
 	kvStore, kvStoreLock, err := sm.getKVStore(originatingTable)
 	if err != nil {
-		return nil
+		return err
 	}
 
 	// wipeout destination table
+	kvStoreLock.Lock()
 	err = sm.wipeoutDestinationTable(destination, destinationTable)
 	if err != nil {
+		kvStoreLock.Unlock()
 		return errors.New("[Storage] Failed to wipeout destination table. Aborting table migration \n" + err.Error())
 	}
 
 	// migrate originating table to destination table
-	kvStoreLock.Lock()
 	for key, value := range kvStore {
 		err := sm.migrateKey(kvStore, key, value, destination, destinationTable)
 		if err != nil {
-			fmt.Println("[Storage] Failed to migrate key while processing TableMigrationRequest.", err.Error())
+			fmt.Println("[Storage] Failed to migrate key during table migration. ", err.Error())
 		}
 	}
 	kvStoreLock.Unlock()
@@ -300,7 +306,7 @@ func (sm *StorageModule) processTableMigrationRequest(request *protobuf.Internal
 	return nil
 }
 
-func (sm *StorageModule) wipeoutDestinationTable(destination string, destinationTable constants.TableSelection) error {
+func (sm *StorageService) wipeoutDestinationTable(destination string, destinationTable constants.TableSelection) error {
 	internalMessage, err := createWipeoutDestinationTableKVRequest(destination, destinationTable)
 	if err != nil {
 		return err
@@ -313,13 +319,13 @@ func (sm *StorageModule) wipeoutDestinationTable(destination string, destination
 	return nil
 }
 
-func (sm *StorageModule) processClientKVRequest(request *protobuf.InternalMsg) error {
+func (sm *StorageService) processClientKVRequest(request *protobuf.InternalMsg) error {
 	kvStore, kvStoreLock := sm.headKVStore, sm.headKVStoreLock // note: hard-coded in case the request didn't set the table
 	err := sm.processKVRequest(request, true, kvStore, kvStoreLock)
 	return err
 }
 
-func (sm *StorageModule) processPropagatedKVRequest(request *protobuf.InternalMsg) error {
+func (sm *StorageService) processPropagatedKVRequest(request *protobuf.InternalMsg) error {
 	tableSelection := constants.TableSelection(request.GetDestinationNodeTable())
 	kvStore, kvStoreLock, err := sm.getKVStore(tableSelection)
 	if err != nil {
@@ -334,7 +340,7 @@ func (sm *StorageModule) processPropagatedKVRequest(request *protobuf.InternalMs
 	TODO: confirm with the coordinator that when a client request arrives at the head of the correct node,
 	it will forward the exact InternalMsg forwarded by the transport layer.
 */
-func (sm *StorageModule) processKVRequest(request *protobuf.InternalMsg, responseToClientRequired bool, kvStore map[string][]byte, kvStoreLock *sync.Mutex) error {
+func (sm *StorageService) processKVRequest(request *protobuf.InternalMsg, responseToClientRequired bool, kvStore map[string][]byte, kvStoreLock *sync.Mutex) error {
 	cast_req := &protobuf.KVRequest{}
 	err := proto.Unmarshal(request.KVRequest, cast_req)
 	if err != nil {
@@ -362,7 +368,7 @@ func (sm *StorageModule) processKVRequest(request *protobuf.InternalMsg, respons
 		case GET_PID:
 			pid, errCode = getpid()
 		case GET_MC:
-			_ = getmemcount()
+			_ = sm.getmemcount()
 		default:
 			errCode = UNKWN_CMD
 		}
@@ -388,7 +394,7 @@ func (sm *StorageModule) processKVRequest(request *protobuf.InternalMsg, respons
 	return nil
 }
 
-func (sm *StorageModule) put(kvStore map[string][]byte, kvStoreLock *sync.Mutex, key []byte, value []byte, version int32) uint32 {
+func (sm *StorageService) put(kvStore map[string][]byte, kvStoreLock *sync.Mutex, key []byte, value []byte, version int32) uint32 {
 	if int(len(value)) > 10000 {
 		return INV_VAL
 	}
@@ -406,10 +412,7 @@ func (sm *StorageModule) put(kvStore map[string][]byte, kvStoreLock *sync.Mutex,
 	return OK
 }
 
-// @Description:Returns the value and version that is associated with the key. If there is no such key in your store, the store should return error (not found).
-// @param key
-// @return []byte
-func (sm *StorageModule) get(kvStore map[string][]byte, kvStoreLock *sync.Mutex, key []byte) ([]byte, uint32) {
+func (sm *StorageService) get(kvStore map[string][]byte, kvStoreLock *sync.Mutex, key []byte) ([]byte, uint32) {
 	kvStoreLock.Lock()
 	value, found := kvStore[string(key)]
 	kvStoreLock.Unlock()
@@ -421,7 +424,7 @@ func (sm *StorageModule) get(kvStore map[string][]byte, kvStoreLock *sync.Mutex,
 	return value, OK
 }
 
-func (sm *StorageModule) remove(kvStore map[string][]byte, kvStoreLock *sync.Mutex, key []byte) uint32 {
+func (sm *StorageService) remove(kvStore map[string][]byte, kvStoreLock *sync.Mutex, key []byte) uint32 {
 	kvStoreLock.Lock()
 	_, found := kvStore[string(key)]
 	kvStoreLock.Unlock()
@@ -437,13 +440,11 @@ func (sm *StorageModule) remove(kvStore map[string][]byte, kvStoreLock *sync.Mut
 
 }
 
-// @Description: calls os.shutdown
 func shutdown() {
 	os.Exit(555)
 }
 
-// @Description: clears the database
-func (sm *StorageModule) wipeout(tableSelection constants.TableSelection) uint32 {
+func (sm *StorageService) wipeout(tableSelection constants.TableSelection) uint32 {
 	switch tableSelection {
 	case constants.Head:
 		sm.headKVStoreLock.Lock()
@@ -464,14 +465,12 @@ func (sm *StorageModule) wipeout(tableSelection constants.TableSelection) uint32
 	return OK
 }
 
-// @Description: response indicating server is alive
 func is_alive() uint32 {
 	fmt.Println("CLIENT ASKED IF SERVER ALIVE")
 
 	return OK
 }
 
-// @Description: gets the current procressID
 func getpid() (int32, uint32) {
 	pid := int32(syscall.Getpid())
 
@@ -479,8 +478,8 @@ func getpid() (int32, uint32) {
 }
 
 // @Description: returns number of members
-func getmemcount() int32 {
-	return 1
+func (sm *StorageService) getmemcount() int32 {
+	return int32(len(sm.gms.GetAllNodes()))
 }
 
 func bToMb(b uint64) uint64 {
@@ -493,7 +492,7 @@ func getCurrMem() uint64 {
 	return bToMb((m.Alloc + m.StackInuse + m.MSpanInuse + m.MCacheInuse))
 }
 
-func (sm *StorageModule) monitorKVStoreSize() {
+func (sm *StorageService) monitorKVStoreSize() {
 	for {
 		time.Sleep(5 * time.Second)
 		fmt.Printf("[Storage] Number of keys in KVStores (Head: %d, Middle: %d, Tail: %d)\n",

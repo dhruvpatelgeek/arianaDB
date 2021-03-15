@@ -5,8 +5,6 @@ type InternalMessageCommands uint32
 const (
 	ProcessClientKVRequest InternalMessageCommands = iota + 1 // if this is a client request sent directly
 	ProcessPropagatedKVRequest
-	ProcessKeyMigrationRequest
-	ProcessTableMigrationRequest
 	ProcessStorageToStorageKVRequest
 )
 
