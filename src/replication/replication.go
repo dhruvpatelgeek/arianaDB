@@ -45,17 +45,19 @@ func (rs *ReplicationService) GetMigrationRange(ipv4 string) (string, string) {
 }
 
 func (rs *ReplicationService) IsPredecessor(ipv4 string) bool {
+
 	predecessor := rs.findPredecessorFromHash(structure.HashKey(rs.hostIPv4))
 	return ipv4 == predecessor
 }
 
 func (rs *ReplicationService) FindPredecessorNode(ipv4 string) string {
-	return rs.findPredecessorFromHash(structure.HashKey(rs.hostIPv4))
+	return rs.findPredecessorFromHash(structure.HashKey(ipv4))
 }
 
 func (rs *ReplicationService) findPredecessorFromHash(hash *big.Int) string {
 	nodeList := rs.gms.GetAllNodes()
-
+	//fmt.Println("[NODE LINST>>]",nodeList)
+	//fmt.Println("[HASH]",hash.String())
 	var responsibleNode string
 	// diff := hashDifference(structure.HashKey(responsibleNode), hash)
 

@@ -7,6 +7,7 @@ import (
 	"dht/src/storage"
 	"dht/src/structure"
 	"dht/src/transport"
+	"dht/src/coordinatorAvailability"
 	"fmt"
 
 	"google.golang.org/protobuf/proto"
@@ -62,6 +63,11 @@ type CoordinatorService struct {
 	hostIP   string
 	hostPort string
 	hostIPv4 string
+
+	//coordinatorAvailability. *CoordinatorAvailability
+	coordinatorAvailability *coordinatorAvailability.CoordinatorAvailability
+	hasCompleteInitializedHeadTable bool
+	isPredeccessorPredeccessorFailed bool
 }
 
 func New(
@@ -96,10 +102,18 @@ func New(
 	coordinator.hostIP = hostIP
 	coordinator.hostPort = hostPort
 	coordinator.hostIPv4 = hostIP + ":" + hostPort
+	
+	var err error
+	coordinator.coordinatorAvailability, err = coordinatorAvailability.New()
+	if(err != nil){
+		fmt.Println("[COOD AVAILIBITY ERR]")
+	}
+	coordinator.hasCompleteInitializedHeadTable = false
+	coordinator.isPredeccessorPredeccessorFailed = false
 
 	// bootstrap worker threads for processing incoming messages & gms events
 	go coordinator.processIncomingMessages()
-	go coordinator.processGMSEvent()
+	// go coordinator.processGMSEvent()
 	go coordinator.processRaftMessages()
 	return coordinator, nil
 }
@@ -142,6 +156,18 @@ func (coordinator *CoordinatorService) processIncomingMessages() {
 	}
 }
 
+
+// Received message from master to start migrating:
+func (coordinator *CoordinatorService) processJoinMigratingRequest(predecessor string) {
+	if !coordinator.coordinatorAvailability.CanStartMigrating() {
+		return
+	}
+
+	// call bunch of functions:
+	coordinator.migratingHead(predecessor)
+}
+
+// TODO: Do we need this function?
 func (coordinator *CoordinatorService) processGMSEvent() {
 	for {
 		gmsEventMessage := <-coordinator.gmsEventChannel
@@ -159,11 +185,121 @@ func (coordinator *CoordinatorService) processGMSEvent() {
 	}
 }
 
+
+// change the head KV-store of the predecessor and itself:
+func (coordinator *CoordinatorService) migratingHead(predecessor string){
+	lowerBound, upperBound := coordinator.replicationService.GetMigrationRange(predecessor)
+
+	toStorage := protobuf.InternalMsg{
+		MessageID: structure.GenerateMessageID(),
+		Command: uint32(constants.ProcessKeyMigrationRequest),
+		MigrationRangeLowerbound: &lowerBound,
+		MigrationRangeUpperbound: &upperBound,
+		MigrationDestinationAddress: &(predecessor),
+	}
+	coordinator.toStorageChannel <- toStorage
+}
+
+
+// The following four function will send a propagate request to the corresponding destination,
+// and the destination will "propagate" its head table to replication nodes if it has received
+// kv-store from its successor. otherwise it'll not propagate.
+
+// This function will be called when migrating head has been finished, this is called from the storage
+// layer.
+
+/*
+  TODO:
+	 - whenever storage finished divided the kv-store and send it to the new joint node, it will:
+	 		- call propagatingMyHead() function to start migrating head.
+			- send a message to the new joint node to tell it that its head table is 
+				complete and can start migrating it to the replication nodes
+	 - There is a variable in every node to indicate that whether the head table of this node has been
+	 	initialized, if it hasn't been initialized within timeout, it'll send rejoin request to master
+	 - Whenever nodes receive the propagatingHead function, it'll first check if its "head completeness"
+	 	variable has been changed to true:
+		 	- true: start migrating head
+			- false: do nothing
+ */
+// capitalized P because this function needs to be called from storage layer.
+func (coordinator *CoordinatorService) PropagatingMyHeadNewJointRequest() {
+	// mark coordinator as available to accept new joint node.
+	coordinator.coordinatorAvailability.FinishedMigrating()
+	coordinator.hasCompleteInitializedHeadTable = true
+	myPredecessor := coordinator.propagatingPredecessorHead(coordinator.hostIPv4)
+	myPredecessorPredecessor := coordinator.propagatingPredecessorHead(myPredecessor)
+	coordinator.propagatingPredecessorHead(myPredecessorPredecessor)
+	coordinator.requestToPropagateHead()
+}
+
+
+// ask my predecessor to propagate head.
+func (coordinator *CoordinatorService) propagatingPredecessorHead(ipv4 string) string{
+	// figured out who is my predecessor:
+	predecessor := coordinator.replicationService.FindPredecessorNode(ipv4)
+
+	// TODO: send a message to that node to propagate to propagate head node and execute requestToPropagateHead function
+	//     - message structure?
+	//     - which function in the transport layer should I called?
+
+	return predecessor
+}
+
+// TODO: whenever the transport layer received propagate request, it should call this function.
+func (coordinator *CoordinatorService) requestToPropagateHead() {
+	if !coordinator.hasCompleteInitializedHeadTable {
+		// if head node hasn't been initialized, then it will not propagate anything
+		return
+	}
+
+	// TODO: send internal message to the storage layer to send the head replication to its successor:
+
+
+	// TODO: send internal message to the storage layer to send the head replication to the successor of the current successor
+}
+
+
+
+func (coordinator *CoordinatorService) processFailureMigratingRequest () {
+	coordinator.hasCompleteInitializedHeadTable = false
+	if !coordinator.isPredeccessorPredeccessorFailed {
+		coordinator.CombineHeadMiddleTable()
+	}else{
+		coordinator.CombineHeadMiddleTailTable()
+	}
+
+	coordinator.isPredeccessorPredeccessorFailed = false
+}
+
+
+func (coordinator *CoordinatorService) markPrdeccessorPredeccessorToBeFailed () {
+	coordinator.isPredeccessorPredeccessorFailed = true
+}
+
+// TODO: this function has to been called by the storage layer so it has to capitalized
+func (coordinator *CoordinatorService) PropagatingMyHeadNewFailureRequest() {
+	coordinator.hasCompleteInitializedHeadTable = true
+	myPredecessor := coordinator.propagatingPredecessorHead(coordinator.hostIPv4)
+	coordinator.propagatingPredecessorHead(myPredecessor)
+	coordinator.requestToPropagateHead()
+}
+
+
+func (coordinator *CoordinatorService) CombineHeadMiddleTable () {
+	//TODO: send internal message to ask storage layer to do this
+}
+
+func (coordinator *CoordinatorService) CombineHeadMiddleTailTable () {
+	//TODO: send internal message to ask storage layer to do this
+}
+
+
 func (coordinator *CoordinatorService) processRaftMessages() {
 	// simply forward it to the raft module
 	for {
 		messageForRaft := protobuf.RaftPayload{}
 		select {
+
 		case messageForRaft = <-coordinator.transport_raft:
 			coordinator.toRaftChan <- messageForRaft
 		}

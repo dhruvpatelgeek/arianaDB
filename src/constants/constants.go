@@ -6,6 +6,9 @@ const (
 	ProcessClientKVRequest InternalMessageCommands = iota + 1 // if this is a client request sent directly
 	ProcessPropagatedKVRequest
 	ProcessStorageToStorageKVRequest
+
+	// don't know if we need this:
+	ProcessKeyMigrationRequest
 )
 
 type TableSelection uint32

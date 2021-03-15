@@ -232,8 +232,16 @@ func (gms *MembershipService) bootstrap(initialMembers []string) {
 				MembersList:            gms.GetAllNodes(),
 				JoinDestinationAddress: &address,
 			}
+// <<<<<<< HEAD
+
+// 			marshalledJoinRequest, err := proto.Marshal(joinRequest)
+// 			if err == nil {
+// 				gms.transport.SendHeartbeat(marshalledJoinRequest, structure.GenerateMessageID(), address)
+// 			} else {
+// =======
 			err := gms.transport.SendHeartbeat(joinRequest, address)
 			if err != nil {
+// >>>>>>> main
 				fmt.Println(err)
 			}
 		}
@@ -307,6 +315,11 @@ func (gms *MembershipService) processSendJoinRequest(request *protobuf.Membershi
 		fmt.Errorf("", err)
 	}
 
+// <<<<<<< HEAD
+// 	gms.transport.SendHeartbeat(payload, structure.GenerateMessageID(), destination)
+
+// =======
+// >>>>>>> main
 	msg := structure.GMSEventMessage{
 		IsJoined: true,
 		Node:     destination,
@@ -324,10 +337,14 @@ func (gms *MembershipService) sendList(destination string) {
 		MembersList:   gms.GetAllNodes(),
 	}
 
+// <<<<<<< HEAD
+// 	gms.transport.SendHeartbeat(payload, structure.GenerateMessageID(), destination)
+// =======
 	err := gms.transport.SendHeartbeat(membershipRequest, destination)
 	if err != nil {
 		fmt.Errorf("", err)
 	}
+// >>>>>>> main
 }
 
 //GetAllNodes () return all membership lists as an array of string
@@ -345,6 +362,26 @@ func (gms *MembershipService) GetAllNodes() []string {
 	return allNodes
 }
 
+// <<<<<<< HEAD
+
+// marshal membershipRequest
+// func (gms *MembershipService) marshalMembershipRequest(command uint32, list []string) (bool, []byte) {
+// 	MReq := &protobuf.MembershipReq{
+// 		SourceAddress: gms.address,
+// 		Command:       command,
+// 		MembersList:   list,
+// 	}
+
+// 	data, err := proto.Marshal(MReq)
+// 	if err != nil {
+// 		fmt.Println("failChecked to encode MembershipReq: ", err)
+// 		return false, nil
+// 	}
+// 	return true, data
+// }
+
+// =======
+// >>>>>>> main
 // unmarshal membershipRequest
 func unmarshalMembershipRequest(list []byte) (*protobuf.MembershipReq, error) {
 	MReq := &protobuf.MembershipReq{}

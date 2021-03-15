@@ -677,4 +677,23 @@ func (tm *TransportModule) R2RSend(payload []byte,destAddr string){
 	}
 	tm.connection.WriteToUDP(marshalled_send_payload,addr )
 }
-//--------------------------------------------------------------------------
+//three way replication-------------------------------------------------------------
+
+func (tm *TransportModule) ReplicationRequest(payload []byte, destAddr string) {
+	if debug {
+		fmt.Println("REQ >", destAddr)
+	}
+	timeoutDuration := SERVER_TO_SERVER_TIMEOUT
+	conn, err := net.Dial("tcp4", destAddr)
+	defer conn.Close() // close this object after doing this call
+
+	err = conn.SetWriteDeadline(time.Now().Add(timeoutDuration))
+	if err != nil {
+		log.Println("[NORMAL] TCP SEND ERR > TCPSend")
+	}
+	_, err = conn.Write(payload)
+	if err != nil {
+		log.Println("[NORMAL] TCP WRITE ERROR > TCPSend")
+	}
+}
+

@@ -3,7 +3,9 @@ package raft
 import (
 	"dht/google_protocol_buffer/pb/protobuf"
 	"dht/src/membership"
+	"dht/src/replication"
 	"dht/src/transport"
+	"encoding/json"
 	"fmt"
 	"github.com/fatih/color"
 	"github.com/golang/protobuf/proto"
@@ -17,7 +19,7 @@ import (
 
 
 
-type node struct {
+type raftnode struct {
 	node_ip  string
 	timeoutMutex sync.Mutex
 	leaderMutex sync.Mutex
@@ -33,14 +35,27 @@ type node struct {
 
 	gmsPtr *membership.MembershipService
 	transportPtr *transport.TransportModule
+	replication *replication.ReplicationService
+
+
+	// MAP IP ADDRESS TO STATUS
+	netMapMutex sync.Mutex
+	/*
+	JOINED -> node just joined
+	LEFT -> node failed
+	COMMIT -> node added to network
+	 */
+	netMap map[string]string
+	// on event status change call the migration
+	procressingStruct []string
 }
 
 // TIMER VARIABLES---------------------
 //maximum netowkr down time is 20 seconds
-var MIN_TIME = 2
-var MAX_TIME = 10
+var MIN_TIME = 6
+var MAX_TIME = 15
 var REFRESH_RATE =500*time.Millisecond
-var NETWORK_DELAY=1 // added the network delay veriable
+var NETWORK_DELAY=3 // added the network delay veriable
 var GAIN=1*time.Second
 //-------------------------------------
 // COLOR MESSAGES-----------------------
@@ -50,12 +65,14 @@ var FWprint=color.New(color.FgMagenta).Add(color.ReverseVideo)
 var Xprint=color.New(color.ReverseVideo)
 var RXprint=color.New(color.FgRed).Add(color.ReverseVideo)
 var ERR=color.New(color.FgYellow).Add(color.ReverseVideo)
+var NCPrint=color.New(color.FgHiCyan)
 //-------------------------------------
 
 //INIT-----------------------------------------
 
 func New(	gmsPtr *membership.MembershipService,
 	transportPtr *transport.TransportModule,
+	replication *replication.ReplicationService,
 	nodeIp string,
 	port int,
 	coordinatorToRaft chan protobuf.RaftPayload){
@@ -73,9 +90,11 @@ func New(	gmsPtr *membership.MembershipService,
 	raftStateMachine := RaftStateMachine(coordinatorToRaft,selfAddr,timeout)
 	raftStateMachine.gmsPtr=gmsPtr
 	raftStateMachine.transportPtr=transportPtr
+	raftStateMachine.replication=replication
 	raftStateMachine.startUpPromt()
 	raftStateMachine.voteRec=0
 	raftStateMachine.voteTermMap= make(map[int32]int32)
+	raftStateMachine.netMap=make(map[string]string)
 	raftStateMachine.termNum=0;
 	err := raftStateMachine.FSM.Event("init")
 	if err != nil {
@@ -85,8 +104,8 @@ func New(	gmsPtr *membership.MembershipService,
 }
 //reference from
 //https://github.com/looplab/fsm/blob/v0.2.0/fsm.go#L88
-func RaftStateMachine(coordinatorToRaft chan protobuf.RaftPayload,node_ip_add string,_timeout time.Duration) *node {
-	currNode := &node{
+func RaftStateMachine(coordinatorToRaft chan protobuf.RaftPayload,node_ip_add string,_timeout time.Duration) *raftnode {
+	currNode := &raftnode{
 		node_ip: node_ip_add,
 		timeout: _timeout,
 		leader_ip: "NULL",
@@ -161,18 +180,18 @@ func RaftStateMachine(coordinatorToRaft chan protobuf.RaftPayload,node_ip_add st
 
 //MAIN STATE FUNCTIONS--------------------------------
 //startup promt
-func (this *node) startUpPromt(){
+func (this *raftnode) startUpPromt(){
 	defer color.Unset()
 	Xprint.Println("[", this.node_ip,"]"," has initilized as a [follower] with timeout [", this.timeout,"]")
 }
 
 // called after each state change
-func (this *node) enterState(fsm_event *fsm.Event) {
+func (this *raftnode) enterState(fsm_event *fsm.Event) {
 	Xprint.Println("STATE TRANSITION [", this.node_ip,"]",fsm_event.Src,">>",fsm_event.Dst)
 }
 
 // called after state has changed to follower
-func (this *node) followerFunc(fsm_event *fsm.Event) {
+func (this *raftnode) followerFunc(fsm_event *fsm.Event) {
 	this.leaderMutex.Lock()
 	termNumber:=this.termNum
 	this.leaderMutex.Unlock()
@@ -181,7 +200,7 @@ func (this *node) followerFunc(fsm_event *fsm.Event) {
 }
 
 // called after state has changed to candidate
-func (this *node) candidateFunc(fsm_event *fsm.Event) {
+func (this *raftnode) candidateFunc(fsm_event *fsm.Event) {
 	CDprint.Println("CANDIDATE FOR LEADERSHIP")
 	CDprint.Println("INIT ELECTION")
 	go this.askForVotes(fsm_event)
@@ -189,13 +208,13 @@ func (this *node) candidateFunc(fsm_event *fsm.Event) {
 }
 
 // called after state has changed to leader
-func (this *node) leaderFunc(fsm_event *fsm.Event) {
-	LDprint.Println("[LEADER NODE]")
-	LDprint.Println("[OUTBOUND]->PINGING")
+func (this *raftnode) leaderFunc(fsm_event *fsm.Event) {
 	LDprint.Println(" TERM",this.termNum,">>",this.FSM.Current())
+	netWatcher:=this.seekChangesToNetworkStructure()
 	for{
 		if(this.FSM.Is("leader")){
 			this.pingAllNodes(fsm_event)
+			netWatcher()
 			ttSleep:=MIN_TIME-NETWORK_DELAY
 			sleep_time:=time.Duration(ttSleep)*time.Second
 			time.Sleep(sleep_time)
@@ -208,7 +227,7 @@ func (this *node) leaderFunc(fsm_event *fsm.Event) {
 //----------------------------------------------------
 
 //HELPER FUNCTIONS------------------------------------
-func (this *node) timeoutToCandidate(fsm_event *fsm.Event){
+func (this *raftnode) timeoutToCandidate(fsm_event *fsm.Event){
 	this.timeoutMutex.Lock()
 	print_timeout:=this.timeout
 	this.timeoutMutex.Unlock()
@@ -225,7 +244,7 @@ func (this *node) timeoutToCandidate(fsm_event *fsm.Event){
 	// STATE TRANSITION INTO THE CANDIDATE STATE
 	this.FSM.Event("follower_to_candidate")
 }
-func (this *node) timeoutToFollower(fsm_event *fsm.Event){
+func (this *raftnode) timeoutToFollower(fsm_event *fsm.Event){
 	time.Sleep(10*time.Second)
 	this.reset()
 	// STATE TRANSITION INTO THE CANDIDATE STATE
@@ -234,8 +253,7 @@ func (this *node) timeoutToFollower(fsm_event *fsm.Event){
 	}
 }
 
-func (this *node) incomingMsgReader(){
-	Xprint.Println("MSG READER INIT")
+func (this *raftnode) incomingMsgReader(){
 	msg:=protobuf.RaftPayload{}
 	for{
 		select {
@@ -249,6 +267,15 @@ func (this *node) incomingMsgReader(){
 				} else if(this.FSM.Is("leader")) {
 					this.FSM.Event("leader_to_follower")
 				}
+				this.netMapMutex.Lock()
+				err := json.Unmarshal(msg.Log, &this.netMap)
+				if(err!=nil){
+					ERR.Println("ERROR MAP UNLOAD")
+				}
+
+				//ERR.Println(this.netMap)
+
+				this.netMapMutex.Unlock()
 				this.leaderMutex.Lock()
 				this.termNum=msg.TermNum;
 				if(this.leader_ip=="NULL"){
@@ -304,7 +331,7 @@ func (this *node) incomingMsgReader(){
 	fmt.Println("CRITICAL ERROR, INBOUND COMMUNICATION HALTED");
 }
 
-func (this *node) reset(){
+func (this *raftnode) reset(){
 	rand.Seed(time.Now().UnixNano())
 	r:=rand.Intn(MAX_TIME - MIN_TIME + 1) + MIN_TIME
 	timeout:=time.Duration(r) * time.Second
@@ -313,7 +340,7 @@ func (this *node) reset(){
 	this.timeoutMutex.Unlock()
 }
 
-func (this *node) askForVotes(fsm_event *fsm.Event){
+func (this *raftnode) askForVotes(fsm_event *fsm.Event){
 	this.leaderMutex.Lock()
 	this.termNum++;
 	this.leaderMutex.Unlock()
@@ -349,14 +376,18 @@ func (this *node) askForVotes(fsm_event *fsm.Event){
 		}
 	}
 }
-func (this *node) pingAllNodes(fsm_event *fsm.Event){
+func (this *raftnode) pingAllNodes(fsm_event *fsm.Event){
+	this.netMapMutex.Lock()
+		current_net_string_struct, err :=json.Marshal(this.netMap)
+	this.netMapMutex.Unlock()
+
 	electionPage:=&protobuf.RaftPayload{
 		Type:                 "PING",
 		SenderIP:             this.node_ip,
 		VoteRes:              "",
 		SenderTermsCompleted: 0,
 		TermNum:              this.termNum,
-		Log:                  nil,
+		Log:                  current_net_string_struct,
 	}
 
 	marshalled_electionPage, err :=proto.Marshal(electionPage)
@@ -373,7 +404,7 @@ func (this *node) pingAllNodes(fsm_event *fsm.Event){
 	}
 }
 
-func(this *node) setLeader(senderAddr string){
+func(this *raftnode) setLeader(senderAddr string){
 	time.Sleep(5*time.Second)
 	var flag =false;
 	this.leaderMutex.Lock()
@@ -414,4 +445,116 @@ func parsePort(address string) string{
 		}
 	}
 	return "127.0.0.1:3000" // dummy port
+}
+
+// THREE WAY REPLICATION ----------------------------
+
+// sends the message informing the node about the change in the network structure
+func (this *raftnode)seekChangesToNetworkStructure() func(){
+	previousGmsString:=this.gmsPtr.GetAllNodes()
+	if len(this.netMap) == 0 {
+		for i:=0;i< len(previousGmsString);i++{
+			this.netMapMutex.Lock()
+			this.netMap[previousGmsString[i]]="JOINED"
+			this.netMapMutex.Unlock()
+		}
+	}
+
+
+	for i:=0;i< len(previousGmsString);i++{
+		if status, found := this.netMap[previousGmsString[i]]; found {
+			if(status=="JOINED"){
+				this.procressChanges(previousGmsString[i])
+			}
+		} else {
+			this.netMapMutex.Lock()
+			this.netMap[previousGmsString[i]]="JOINED"
+			this.netMapMutex.Unlock()
+		}
+	}
+
+	// is something is int he map but not detected by the master
+	// it would mean that that node has failed
+	this.netMapMutex.Lock()
+	for ipAddr, _ := range this.netMap {
+		if(!stringInSlice(ipAddr,previousGmsString)){
+			NCPrint.Println("UNJOINED NODE FAILED",ipAddr)
+			this.netMap[ipAddr] = "FAIL"
+		}
+	}
+	this.netMapMutex.Unlock()
+
+	return func() {
+		currGmsString:=this.gmsPtr.GetAllNodes()
+		if(len(previousGmsString)!= len(currGmsString)) {
+			networkDifference:=difference(previousGmsString,currGmsString)
+			NCPrint.Println("NETCHANGE DETECTED ",networkDifference)
+			for i:=0;i< len(networkDifference);i++ {
+				if status, found := this.netMap[networkDifference[i]]; found {
+					if(status=="FAIL"){
+						NCPrint.Println("NODE RECOVERED",networkDifference[i])
+						this.netMap[networkDifference[i]] = "JOINED"
+						this.procressChanges(networkDifference[i])
+					} else if(status=="JOINED") {
+						NCPrint.Println("UNJOINED NODE FAILED",networkDifference[i])
+						this.netMap[networkDifference[i]] = "FAIL"
+					} else if(status=="COMMIT") {
+						NCPrint.Println("NODE FAILED",networkDifference[i])
+						this.netMap[networkDifference[i]] = "FAIL"
+					}
+
+				} else {
+					NCPrint.Println("NEW NODE JOINED",networkDifference[i])
+					this.netMap[networkDifference[i]] = "JOINED"
+				}
+			}
+			previousGmsString=currGmsString
+		}
+	}
+}
+
+func (this *raftnode) procressChanges(string_ip string){
+	//DUMMY
+	NCPrint.Println("SENDING JOING REQUEST OF",string_ip," TO ",this.replication.FindPredecessorNode(string_ip))
+	this.netMapMutex.Lock()
+	this.netMap[string_ip]="COMMIT"
+	this.netMapMutex.Unlock()
+}
+//https://stackoverflow.com/questions/19374219/how-to-find-the-difference-between-two-slices-of-strings
+func difference(slice1 []string, slice2 []string) []string {
+	var diff []string
+
+	// Loop two times, first to find slice1 strings not in slice2,
+	// second loop to find slice2 strings not in slice1
+	for i := 0; i < 2; i++ {
+		for _, s1 := range slice1 {
+			found := false
+			for _, s2 := range slice2 {
+				if s1 == s2 {
+					found = true
+					break
+				}
+			}
+			// String not found. We add it to return slice
+			if !found {
+				diff = append(diff, s1)
+			}
+		}
+		// Swap the slices, only if it was the first loop
+		if i == 0 {
+			slice1, slice2 = slice2, slice1
+		}
+	}
+
+	return diff
+}
+
+//https://stackoverflow.com/questions/15323767/does-go-have-if-x-in-construct-similar-to-python
+func stringInSlice(a string, list []string) bool {
+	for _, b := range list {
+		if b == a {
+			return true
+		}
+	}
+	return false
 }

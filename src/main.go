@@ -64,7 +64,8 @@ func main() {
 	replicationService := replication.New(containerHostname, port, gms)
 
 	//initialize the raft service
-	raft.New(gms, transportService, containerHostname, portInt, coordinatorToRaftChannel)
+	raft.New(gms,transportService,replicationService,containerHostname,portInt,coordinatorToRaftChannel)
+
 
 	// initialize coordinator service
 	_, err = coordinator.New(
