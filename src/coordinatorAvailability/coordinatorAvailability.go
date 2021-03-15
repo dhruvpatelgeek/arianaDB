@@ -30,7 +30,7 @@ func (coordinatorAvailability *CoordinatorAvailability) CanStartMigrating() bool
 	}
 }
 
-func (coordinatorAvailability *CoordinatorAvailability) FinishedMigrating(){
+func (coordinatorAvailability *CoordinatorAvailability) FinishedDistributeKeys(){
 	coordinatorAvailability.mu.Lock()
 	coordinatorAvailability.availible = true
 	coordinatorAvailability.mu.Unlock()

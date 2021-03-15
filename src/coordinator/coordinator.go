@@ -157,39 +157,73 @@ func (coordinator *CoordinatorService) processIncomingMessages() {
 }
 
 
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////
+// Join Request:
+
 // Received message from master to start migrating:
-func (coordinator *CoordinatorService) processJoinMigratingRequest(predecessor string) {
+/*	Master will send an InternalMsg which will be received by the Coordinator.
+	Coordinator will take appropriate action based on the InternalMsg
+*/
+func (coordinator *CoordinatorService) processJoinMigrationRequest() error {
 	if !coordinator.coordinatorAvailability.CanStartMigrating() {
-		return
+		return nil
 	}
 
-	// call bunch of functions:
-	coordinator.migratingHead(predecessor)
-}
-
-// TODO: Do we need this function?
-func (coordinator *CoordinatorService) processGMSEvent() {
-	for {
-		gmsEventMessage := <-coordinator.gmsEventChannel
-		if gmsEventMessage.IsJoined && coordinator.replicationService.IsPredecessor(gmsEventMessage.Node) {
-			destination := gmsEventMessage.Node
-			lowerbound, upperbound := coordinator.replicationService.GetMigrationRange(gmsEventMessage.Node)
-
-			originatingTable := constants.Head
-			destinationTable := constants.Middle
-			err := coordinator.storageService.MigratePartialTable(destination, originatingTable, destinationTable, lowerbound, upperbound)
-			if err != nil {
-				fmt.Printf("[Coordinator] Failed to migrate partial table. Caused by: \n\t%s \n", err.Error())
-			}
-		}
+	// distribute keys from local to the newly joined node
+	predecessor := coordinator.replicationService.FindPredecessorNode(coordinator.hostIPv4)
+	err := coordinator.distributeKeys(predecessor, constants.Head)
+	if err != nil {
+		return err
+		// TODO: consider what we would do if we failed to distributeKeys
+		// TODO: catastrophic. send leader a response saying we failed?
 	}
+
+	// tell other nodes to replicate their head tables
+
+
+	/* TODO:	
+	1. sends InternalMsg to other nodes telling them to replicate their tables (assumes they're all aware of the new node in their gms)
+		- TODO: make sure that before a node starts the migration process, the "Leader" tells everyone in the service of the new node.
+		- note: for buffered join requests, "Leader" will process buffered request once the migration stuff is complete.
+		- TODO: replace Propagating with Migration...
+	*/
+
+	// mark coordinator as available to accept new joint node.u
+	coordinator.coordinatorAvailability.FinishedDistributeKeys()
+	coordinator.hasCompleteInitializedHeadTable = true
+
+	// ask its predecessor to do migrating
+	// TODO: create a function for sending a request to replicate its head table
+	// TODO: grab the predecessor from the replication service
+	// TODO: consider how this will work when there's only 1 node & 2 nodes
+	err = coordinator.sendReplicationRequest(predecessor, constants.Head)
+	
+	// ask its predecessor's predecessor to do migrating (i.e.: like great-grandfather?)
+	// TODO: FindPredecessorNode(referenceNode) returns an error if there is no predecessor
+	greatPredecessor := coordinator.replicationService.FindPredecessorNode(predecessor)
+	err = coordinator.sendReplicationRequest(greatPredecessor, constants.Head)
+
+	// TODO: come up with a better name scheme
+	greatGreatPredecessor := coordinator.replicationService.FindPredecessorNode(greatPredecessor)
+	err = coordinator.sendReplicationRequest(greatGreatPredecessor, constants.Head)
+
+	// ask itself to do replicate its head table
+	coordinator.replicateTable(constants.Head)
+
+	// TODO: send an acknowledgement to the leader?
+	
+	
+	return nil
 }
 
 
 // change the head KV-store of the predecessor and itself:
-func (coordinator *CoordinatorService) migratingHead(predecessor string){
+// TODO: this is for redistributing the local head table to the newly joined node
+func (coordinator *CoordinatorService) distributeKeys(predecessor string, tableSelection constants.TableSelection) error {
 	lowerBound, upperBound := coordinator.replicationService.GetMigrationRange(predecessor)
 
+	//TODO: call function
 	toStorage := protobuf.InternalMsg{
 		MessageID: structure.GenerateMessageID(),
 		Command: uint32(constants.ProcessKeyMigrationRequest),
@@ -198,6 +232,8 @@ func (coordinator *CoordinatorService) migratingHead(predecessor string){
 		MigrationDestinationAddress: &(predecessor),
 	}
 	coordinator.toStorageChannel <- toStorage
+
+	return nil
 }
 
 
@@ -205,8 +241,7 @@ func (coordinator *CoordinatorService) migratingHead(predecessor string){
 // and the destination will "propagate" its head table to replication nodes if it has received
 // kv-store from its successor. otherwise it'll not propagate.
 
-// This function will be called when migrating head has been finished, this is called from the storage
-// layer.
+// This function will be called when migrating head has been finished, this is called from the storage layer.
 
 /*
   TODO:
@@ -221,75 +256,82 @@ func (coordinator *CoordinatorService) migratingHead(predecessor string){
 		 	- true: start migrating head
 			- false: do nothing
  */
-// capitalized P because this function needs to be called from storage layer.
-func (coordinator *CoordinatorService) PropagatingMyHeadNewJointRequest() {
-	// mark coordinator as available to accept new joint node.
-	coordinator.coordinatorAvailability.FinishedMigrating()
-	coordinator.hasCompleteInitializedHeadTable = true
-	myPredecessor := coordinator.propagatingPredecessorHead(coordinator.hostIPv4)
-	myPredecessorPredecessor := coordinator.propagatingPredecessorHead(myPredecessor)
-	coordinator.propagatingPredecessorHead(myPredecessorPredecessor)
-	coordinator.requestToPropagateHead()
-}
-
-
-// ask my predecessor to propagate head.
-func (coordinator *CoordinatorService) propagatingPredecessorHead(ipv4 string) string{
+// TODO: write some docs
+// TODO: come up with a better name for ipv (the guy to whom we send the request)
+func (coordinator *CoordinatorService) sendReplicationRequest(destinationIPV4 string, tableSelection constants.TableSelection) error {
 	// figured out who is my predecessor:
-	predecessor := coordinator.replicationService.FindPredecessorNode(ipv4)
 
-	// TODO: send a message to that node to propagate to propagate head node and execute requestToPropagateHead function
-	//     - message structure?
-	//     - which function in the transport layer should I called?
-
-	return predecessor
+	return nil
 }
 
-// TODO: whenever the transport layer received propagate request, it should call this function.
-func (coordinator *CoordinatorService) requestToPropagateHead() {
+func (coordinator *CoordinatorService) replicateTable(constants.TableSelection) error {
 	if !coordinator.hasCompleteInitializedHeadTable {
 		// if head node hasn't been initialized, then it will not propagate anything
-		return
+		return nil
 	}
 
 	// TODO: send internal message to the storage layer to send the head replication to its successor:
-
+	successor := ""
+	err := coordinator.storageService.MigrateTable(successor, constants.Head, constants.Middle)
+	if err!= nil {
+		return err
+	}
 
 	// TODO: send internal message to the storage layer to send the head replication to the successor of the current successor
+	greatSuccessor := ""
+
+	err = coordinator.storageService.MigrateTable(greatSuccessor, constants.Head, constants.Tail)
+	if err!= nil {
+		return err
+	}
+
+	return nil
 }
 
+///////////////////////////////////////////////////////////////////////////////////////////
+// failure request
 
-
-func (coordinator *CoordinatorService) processFailureMigratingRequest () {
+func (coordinator *CoordinatorService) processFailMigrationRequest() error {
+	// merge local tables
 	coordinator.hasCompleteInitializedHeadTable = false
 	if !coordinator.isPredeccessorPredeccessorFailed {
-		coordinator.CombineHeadMiddleTable()
+		coordinator.combineHeadMiddleTable()
 	}else{
-		coordinator.CombineHeadMiddleTailTable()
+		coordinator.combineHeadMiddleTailTable()
 	}
 
 	coordinator.isPredeccessorPredeccessorFailed = false
-}
-
-
-func (coordinator *CoordinatorService) markPrdeccessorPredeccessorToBeFailed () {
-	coordinator.isPredeccessorPredeccessorFailed = true
-}
-
-// TODO: this function has to been called by the storage layer so it has to capitalized
-func (coordinator *CoordinatorService) PropagatingMyHeadNewFailureRequest() {
 	coordinator.hasCompleteInitializedHeadTable = true
-	myPredecessor := coordinator.propagatingPredecessorHead(coordinator.hostIPv4)
-	coordinator.propagatingPredecessorHead(myPredecessor)
-	coordinator.requestToPropagateHead()
+
+	// 
+	// ask its predecessor to do migrating
+	// TODO: create a function for sending a request to replicate its head table
+	// TODO: grab the predecessor from the replication service
+	predecessor := coordinator.replicationService.FindPredecessorNode(coordinator.hostIPv4)
+	err := coordinator.sendReplicationRequest(predecessor, constants.Head)
+	if err!= nil {
+		return err
+	}
+
+	// ask its predecessor's predecessor to do migrating (i.e.: like great-grandfather?)
+	greatPredecessor := coordinator.replicationService.FindPredecessorNode(predecessor)
+	err = coordinator.sendReplicationRequest(greatPredecessor, constants.Head)
+	if err!= nil {
+		return err
+	}
+	
+	// TODO: 
+	coordinator.replicateTable(constants.Head)
+
+	// TODO: send a response to the Leader? 
+	return nil
 }
 
-
-func (coordinator *CoordinatorService) CombineHeadMiddleTable () {
+func (coordinator *CoordinatorService) combineHeadMiddleTable () {
 	//TODO: send internal message to ask storage layer to do this
 }
 
-func (coordinator *CoordinatorService) CombineHeadMiddleTailTable () {
+func (coordinator *CoordinatorService) combineHeadMiddleTailTable () {
 	//TODO: send internal message to ask storage layer to do this
 }
 
