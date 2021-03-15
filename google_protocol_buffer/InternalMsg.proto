@@ -54,4 +54,9 @@ message InternalMsg {
   optional string migrationRangeUpperbound = 8;
   optional string migrationDestinationAddress = 9;
   optional uint32 destinationNodeTable = 10;
+
+  // for the NETWORK JOIN REQUEST
+  optional string joinType=11;//"JOINED","FAIL"
+  optional string failOption=12;//"PREDECESSOR", or "GRAND_PREDECESSOR"
+
 }
