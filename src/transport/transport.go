@@ -566,6 +566,7 @@ func (tm *TransportModule) CachedSendStorageToStorage(payload []byte, messageID 
 
 }
 
+//TODO: rename this to something else since it also procresse the replica message
 func (tm *TransportModule) processStorageToStorageMessages() {
 	defer tm.storageToStorageConnection.Close()
 
@@ -591,8 +592,22 @@ func (tm *TransportModule) processStorageToStorageMessages() {
 			log.Println("[Transport] Unable to marshal a storage-to-storage request. Ignoring this message")
 			continue
 		}
+		if(internalMessage.Command==69){
 
-		tm.storageChannel <- *internalMessage
+			//uncomment to see the message type
+
+			//if(*internalMessage.JoinType=="FAIL"){
+			//	fmt.Println("[RECIVED REQUEST]  AS ",*internalMessage.FailOption,"OF A FAILURE")
+			//} else {
+			//	fmt.Println("[RECIVED REQUEST] AS ",*internalMessage.JoinType)
+			//}
+
+			// TODO:[DELETE]procress the request.....
+			tm.coodinatorChan<-*internalMessage
+		} else {
+			tm.storageChannel <- *internalMessage
+		}
+
 	}
 }
 

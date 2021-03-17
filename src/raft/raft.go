@@ -17,6 +17,9 @@ import (
 	"time"
 )
 
+//DEBUG-------------------------
+var debug=false;
+//------------------------------
 
 
 type raftnode struct {
@@ -55,9 +58,9 @@ type raftnode struct {
 // TIMER VARIABLES---------------------
 //maximum netowkr down time is 20 seconds
 var MIN_TIME = 6
-var MAX_TIME = 15
-var REFRESH_RATE =500*time.Millisecond
-var NETWORK_DELAY=3 // added the network delay veriable
+var MAX_TIME = 16
+var REFRESH_RATE =250*time.Millisecond
+var NETWORK_DELAY=5 // added the network delay veriable
 var GAIN=1*time.Second
 //-------------------------------------
 // COLOR MESSAGES-----------------------
@@ -155,7 +158,7 @@ func RaftStateMachine(coordinatorToRaft chan protobuf.RaftPayload,node_ip_add st
 				currNode.followerFunc(e)
 			},
 			"before_candidate_to_follower":func(e *fsm.Event) {
-				CDprint.Println("EXISTING LEADER DETECTED")
+				CDprint.Println("FAILED TO WIN ELECTION")
 			},
 			"enter_follower":func(e *fsm.Event) {
 				defer color.Unset()
@@ -248,9 +251,9 @@ func (this *raftnode) timeoutToCandidate(fsm_event *fsm.Event){
 }
 func (this *raftnode) timeoutToFollower(fsm_event *fsm.Event){
 	time.Sleep(10*time.Second)
-	this.reset()
-	// STATE TRANSITION INTO THE CANDIDATE STATE
 	if(this.FSM.Is("candidate")){
+		CDprint.Println("CANDIDATE TIMED OUT")
+		this.reset()
 		this.FSM.Event("candidate_to_follower")
 	}
 }
@@ -265,6 +268,7 @@ func (this *raftnode) incomingMsgReader(){
 				var newLeader =false
 				this.reset()
 				if(this.FSM.Is("candidate")){
+					CDprint.Println("EXSISTING LEADER DETECTED")
 					this.FSM.Event("candidate_to_follower")
 				} else if(this.FSM.Is("leader")) {
 					this.FSM.Event("leader_to_follower")
@@ -275,7 +279,28 @@ func (this *raftnode) incomingMsgReader(){
 					ERR.Println("ERROR MAP UNLOAD")
 				}
 
-				//ERR.Println(this.netMap)
+				if(debug){
+					var commit,fail,join,total int
+					commit=0
+					join=0
+					total=0
+					fail=0
+					for ipAddr, value := range this.netMap {
+						total++
+						if(value=="COMMIT"){
+							commit++
+						}
+						if(value=="JOINED"){
+							join++
+							ERR.Println("NODE JOIN ",ipAddr)
+						}
+						if(value=="FAIL"){
+							fail++
+							ERR.Println("NODE FAILED ",ipAddr)
+						}
+					}
+					ERR.Println("COMMIT:",commit," JOIN:",join," FAIL:",fail," TOTAL:",total);
+				}
 
 				this.netMapMutex.Unlock()
 				this.leaderMutex.Lock()
@@ -371,7 +396,7 @@ func (this *raftnode) askForVotes(fsm_event *fsm.Event){
 	}
 	// then ask eveyone else ot vote for you
 	for i := 0; i < len(nodeLists); i++ {
-		currPort=parsePort(nodeLists[i])
+		currPort=parsePort(nodeLists[i],2)
 		if(currPort!=this.node_ip){
 			//CDprint.Println("ASKING for VOTES FROM ",currPort)
 			this.transportPtr.R2RSend(marshalled_electionPage,currPort)
@@ -399,7 +424,7 @@ func (this *raftnode) pingAllNodes(fsm_event *fsm.Event){
 	nodeLists:=this.gmsPtr.GetAllNodes()
 	var currPort string
 	for i := 0; i < len(nodeLists); i++ {
-		currPort=parsePort(nodeLists[i])
+		currPort=parsePort(nodeLists[i],2)
 		if(currPort!=this.node_ip){
 			this.transportPtr.R2RSend(marshalled_electionPage,currPort)
 		}
@@ -431,7 +456,7 @@ func(this *raftnode) setLeader(senderAddr string){
 		this.transportPtr.R2RSend(marshalled_revolution,senderAddr)
 	}
 }
-func parsePort(address string) string{
+func parsePort(address string,offset int) string{
 	var port_num string
 	for i:=0;i< len(address);i++{
 		if(address[i]== ':'){
@@ -440,7 +465,7 @@ func parsePort(address string) string{
 			if(err!=nil){
 				fmt.Println("ERROR CASTING")
 			}
-			casted_port+=2;
+			casted_port+=offset;
 			new_address:=address[:i+1]+strconv.Itoa(casted_port)
 			//fmt.Println("NEW ADDRESS->",new_address)
 			return new_address
@@ -466,7 +491,7 @@ func (this *raftnode)seekChangesToNetworkStructure() func(){
 	for i:=0;i< len(previousGmsString);i++{
 		if status, found := this.netMap[previousGmsString[i]]; found {
 			if(status=="JOINED"){
-				this.procressChanges(previousGmsString[i])
+				this.procressJoin(previousGmsString[i])
 			}
 		} else {
 			this.netMapMutex.Lock()
@@ -480,8 +505,9 @@ func (this *raftnode)seekChangesToNetworkStructure() func(){
 	this.netMapMutex.Lock()
 	for ipAddr, _ := range this.netMap {
 		if(!stringInSlice(ipAddr,previousGmsString)){
-			NCPrint.Println("UNJOINED NODE FAILED",ipAddr)
+			//NCPrint.Println("<>FAILED",ipAddr)
 			this.netMap[ipAddr] = "FAIL"
+			this.procressFail(ipAddr)
 		}
 	}
 	this.netMapMutex.Unlock()
@@ -496,13 +522,15 @@ func (this *raftnode)seekChangesToNetworkStructure() func(){
 					if(status=="FAIL"){
 						NCPrint.Println("NODE RECOVERED",networkDifference[i])
 						this.netMap[networkDifference[i]] = "JOINED"
-						this.procressChanges(networkDifference[i])
+						this.procressJoin(networkDifference[i])
 					} else if(status=="JOINED") {
 						NCPrint.Println("UNJOINED NODE FAILED",networkDifference[i])
 						this.netMap[networkDifference[i]] = "FAIL"
+						this.procressFail(networkDifference[i])
 					} else if(status=="COMMIT") {
 						NCPrint.Println("NODE FAILED",networkDifference[i])
 						this.netMap[networkDifference[i]] = "FAIL"
+						this.procressFail(networkDifference[i])
 					}
 
 				} else {
@@ -515,9 +543,67 @@ func (this *raftnode)seekChangesToNetworkStructure() func(){
 	}
 }
 
-func (this *raftnode) procressChanges(string_ip string){
+func (this *raftnode) procressFail(string_ip string){
 	//DUMMY
-	NCPrint.Println("SENDING JOING REQUEST OF",string_ip," TO ",this.replication.FindPredecessorNode(string_ip))
+	predecessor_ip:=this.replication.FindPredecessorNode(string_ip)
+	jointype:="FAIL"
+	FailOption:="PREDECESSOR"
+
+	fail_Payload_predecessor:=&protobuf.InternalMsg{
+		MessageID:                   nil,
+		Command:                     69,
+		JoinType:                    &jointype,
+		FailOption:                  &FailOption,
+	}
+	payload, err :=proto.Marshal(fail_Payload_predecessor)
+	if err != nil{
+		log.Println("[PAYLOAD ERROR]")
+	}
+
+	NCPrint.Println("PREDECESSOR FAIL REQ",string_ip," TO ",predecessor_ip)
+	this.transportPtr.ReplicationRequest(payload,parsePort(predecessor_ip,1))// 1 offset for TCP PORT
+
+	// now sending it to the grand predecessor GRAND_PREDECESSOR
+	grand_FailOption:="GRAND_PREDECESSOR"
+	grand_predecessor_ip:=this.replication.FindPredecessorNode(predecessor_ip)
+
+	fail_Payload_predecessor=&protobuf.InternalMsg{
+		MessageID:                   nil,
+		Command:                     69,
+		JoinType:                    &jointype,
+		FailOption:                  &grand_FailOption,
+	}
+	payload, err =proto.Marshal(fail_Payload_predecessor)
+	if err != nil{
+		log.Println("[PAYLOAD ERROR]")
+	}
+
+	NCPrint.Println("GRAND_PREDECESSOR FAIL REQ",string_ip," TO ",grand_predecessor_ip)
+	this.transportPtr.ReplicationRequest(payload,parsePort(grand_predecessor_ip,1))// 1 offset for TCP PORT
+
+}
+
+func (this *raftnode) procressJoin(string_ip string){
+	//DUMMY
+	destination:=this.replication.FindPredecessorNode(string_ip)
+	var jointype *string;
+	jointype=new(string)
+	*jointype="JOINED"
+	FailOption:="NULL"
+
+	joinPayload:=protobuf.InternalMsg{
+		MessageID:                   nil,
+		Command:                     69,
+		JoinType:                    jointype,
+		FailOption:                  &FailOption,
+	}
+	payload, err :=proto.Marshal(&joinPayload)
+	if err != nil{
+		log.Println("[PAYLOAD ERROR]")
+	}
+
+	NCPrint.Println("SENDING ",*joinPayload.JoinType," REQUEST OF",string_ip," TO ",destination)
+	this.transportPtr.ReplicationRequest(payload,parsePort(destination,1))// 1 offset for TCP PORT
 	this.netMapMutex.Lock()
 	this.netMap[string_ip]="COMMIT"
 	this.netMapMutex.Unlock()
