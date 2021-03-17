@@ -471,9 +471,9 @@ func parsePort(address string,offset int) string{
 			return new_address
 		}
 	}
-	return "127.0.0.1:3000" // dummy port
+	log.Println("[PARSE PORT ERROR]",address)
+	return address
 }
-
 // THREE WAY REPLICATION ----------------------------
 
 // sends the message informing the node about the change in the network structure

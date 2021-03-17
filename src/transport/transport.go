@@ -696,12 +696,17 @@ func (tm *TransportModule) R2RSend(payload []byte,destAddr string){
 }
 //three way replication-------------------------------------------------------------
 
+//USED BY RAFT TO COMMUNICATE WITH THE COORDINATOR
 func (tm *TransportModule) ReplicationRequest(payload []byte, destAddr string) {
 	if debug {
 		fmt.Println("REQ >", destAddr)
 	}
 	timeoutDuration := SERVER_TO_SERVER_TIMEOUT
 	conn, err := net.Dial("tcp4", destAddr)
+	if(err!=nil){
+		log.Println("[TCP ReplicationRequest ERR]",err)
+		return
+	}
 	defer conn.Close() // close this object after doing this call
 
 	err = conn.SetWriteDeadline(time.Now().Add(timeoutDuration))
@@ -713,5 +718,4 @@ func (tm *TransportModule) ReplicationRequest(payload []byte, destAddr string) {
 		log.Println("[NORMAL] TCP WRITE ERROR > TCPSend")
 	}
 }
-
 
