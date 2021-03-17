@@ -306,6 +306,45 @@ func (sm *StorageService) MigrateTable(destination string,
 	return nil
 }
 
+/**	MergeTables locally transfer the contents of source table into the destination table without
+first removing the contents of the destination table.
+
+This operation will wipeout the source table.
+*/
+func (sm *StorageService) MergeTables(
+	destinationTable constants.TableSelection,
+	sourceTable constants.TableSelection) error {
+
+	// get selected kvStore & its lock
+	sourceKVStore, sourceKVStoreLock, err := sm.getKVStore(sourceTable)
+	if err != nil {
+		return err
+	}
+
+	destinationKVStore, destinationKVStoreLock, err := sm.getKVStore(destinationTable)
+	if err != nil {
+		return err
+	}
+
+	// block all other operations on the source and destination tables
+	sourceKVStoreLock.Lock()
+	defer sourceKVStoreLock.Unlock()
+	destinationKVStoreLock.Lock()
+	defer destinationKVStoreLock.Unlock()
+
+	// migrate originating table to destination table
+	for key, value := range sourceKVStore {
+		destinationKVStore[key] = value
+	}
+
+	// clear source table for ease of debugging
+	for k := range sourceKVStore {
+		delete(sourceKVStore, k)
+	}
+
+	return nil
+}
+
 func (sm *StorageService) wipeoutDestinationTable(destination string, destinationTable constants.TableSelection) error {
 	internalMessage, err := createWipeoutDestinationTableKVRequest(destination, destinationTable)
 	if err != nil {
