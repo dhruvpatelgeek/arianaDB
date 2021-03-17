@@ -139,22 +139,66 @@ func (coordinator *CoordinatorService) processIncomingMessages() {
 			continue
 		}
 
-		// ask replicationService which node should handle this message.
-		destination := coordinator.replicationService.GetNextNode(kvRequest.Key)
-
-		// process message locally or forward
-		if selfIP := coordinator.hostIPv4; destination == selfIP {
-			coordinator.toStorageChannel <- incomingMessage
-		} else {
-			marshalledIncomingMessage, err := proto.Marshal(&incomingMessage)
-			if err != nil {
-				fmt.Println("Failed to marshal IncomingMsg in CoordinatorService for forwarding. Ignoring this message.", err)
-				continue
-			}
-
-			coordinator.transport.SendCoordinatorToCoordinator(marshalledIncomingMessage, []byte("reques"+string(incomingMessage.MessageID)), destination)
+		command := incomingMessage.GetCommand()
+		switch constants.InternalMessageCommands(command) {
+		case constants.ProcessClientKVRequest:
+			coordinator.processClientRequest(incomingMessage, kvRequest)
+		case constants.ProcessPropagatedKVRequest:
+			coordinator.processPropagatedRequest(incomingMessage, kvRequest)
 		}
+
 	}
+}
+
+func (coordinator *CoordinatorService) processClientRequest(incomingMessage protobuf.InternalMsg, kvRequest *protobuf.KVRequest) {
+	destinationAddress := coordinator.replicationService.GetNextNode(string(kvRequest.Key))
+	destinationTable := uint32(constants.Head)
+	respondToClient := false
+
+	if selfIP := coordinator.hostIPv4; destinationAddress == selfIP {
+		coordinator.toStorageChannel <- incomingMessage
+		destinationAddress = coordinator.replicationService.GetNextNode(selfIP)
+		destinationTable = uint32(constants.Middle)
+	}
+
+	outgoingMessage := incomingMessage
+	outgoingMessage.Command = uint32(constants.ProcessPropagatedKVRequest)
+	outgoingMessage.DestinationNodeTable = &destinationTable
+	outgoingMessage.RespondToClient = &respondToClient
+
+	coordinator.propagateRequest(outgoingMessage, destinationAddress)
+}
+
+func (coordinator *CoordinatorService) processPropagatedRequest(incomingMessage protobuf.InternalMsg, kvRequest *protobuf.KVRequest) {
+	coordinator.toStorageChannel <- incomingMessage
+
+	currTable := incomingMessage.GetDestinationNodeTable()
+	if constants.TableSelection(currTable) != constants.Tail {
+		destinationAddress := coordinator.replicationService.GetNextNode(coordinator.hostIPv4)
+		destinationTable := uint32(constants.TableSelection(incomingMessage.GetDestinationNodeTable() + 1))
+		respondToClient := false
+
+		if destinationTable == uint32(constants.Tail) {
+			respondToClient = true
+		}
+		
+		outgoingMessage := incomingMessage
+		outgoingMessage.Command = uint32(constants.ProcessPropagatedKVRequest)
+		outgoingMessage.DestinationNodeTable = &destinationTable
+		outgoingMessage.RespondToClient = &respondToClient
+
+		coordinator.propagateRequest(outgoingMessage, destinationAddress)
+	}
+}
+
+func (coordinator *CoordinatorService) propagateRequest(outgoingMessage protobuf.InternalMsg, destinationAddress string) {
+	marshalledOutgoingMessage, err := proto.Marshal(&outgoingMessage)
+	if err != nil {
+		fmt.Println("Failed to marshal IncomingMsg in CoordinatorService for forwarding. Ignoring this message.", err)
+		return
+	}
+
+	coordinator.transport.SendCoordinatorToCoordinator(marshalledOutgoingMessage, []byte("reques"+string(outgoingMessage.MessageID)), destinationAddress)
 }
 
 //////////////////////////////////////////////////////////////////////////////////////////////////////////

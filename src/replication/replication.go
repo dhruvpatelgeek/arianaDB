@@ -3,6 +3,7 @@ package replication
 import (
 
 	//"log"
+	//"fmt"
 	"dht/src/membership"
 	"dht/src/structure"
 	"math/big"
@@ -73,7 +74,7 @@ func (rs *ReplicationService) findPredecessorFromHash(hash *big.Int) string {
 	// Find node responsible for given key
 	for _, currNode := range nodeList {
 		currDiff := hashDifference(structure.HashKey(currNode), hash)
-		if currDiff.Cmp(diff) == LESS  && currDiff.Cmp(big.NewInt(0)) != EQUAL {
+		if currDiff.Cmp(diff) == LESS && currDiff.Cmp(big.NewInt(0)) != EQUAL {
 			diff = currDiff
 			responsibleNode = currNode
 		}
@@ -85,27 +86,29 @@ func (rs *ReplicationService) findPredecessorFromHash(hash *big.Int) string {
 // @Description: Determines which node is responsible for the given key
 // @param key
 // @return string - Location of node responsible for the given key
-func (rs *ReplicationService) GetNextNode(key []byte) string {
+func (rs *ReplicationService) GetNextNode(key string) string {
 	// TODO: for the same key, this is giving different results
 	if len(key) == 0 {
 		return rs.hostIPv4
 	}
 
-	keyHashInt := structure.HashKey(string(key))
+	keyHashInt := structure.HashKey(key)
 
-	return rs.findSuccessorNode(keyHashInt)
+	return rs.findSuccessorNodeFromHash(keyHashInt)
 }
 
-func (rs *ReplicationService) findSuccessorNode(hash *big.Int) string {
+func (rs *ReplicationService) findSuccessorNodeFromHash(hash *big.Int) string {
 	nodeList := rs.gms.GetAllNodes()
 
 	responsibleNode := nodeList[0]
-	diff := hashDifference(hash, structure.HashKey(responsibleNode))
+	increment := big.NewInt(1)
+	diff := hashDifference(increment.Add(hash, increment), structure.HashKey(responsibleNode))
 
 	// Find node responsible for given key
 	for _, currNode := range nodeList {
-		currDiff := hashDifference(hash, structure.HashKey(currNode))
-		if currDiff.Cmp(diff) == LESS {
+		currNodeHash := structure.HashKey(currNode)
+		currDiff := hashDifference(hash, currNodeHash)
+		if currDiff.Cmp(diff) == LESS && currNodeHash.Cmp(hash) != EQUAL {
 			diff = currDiff
 			responsibleNode = currNode
 		}

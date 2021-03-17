@@ -406,12 +406,14 @@ func (tm *TransportModule) clientReq(payload []byte, messageID []byte, clientAdd
 	if found {
 		tm.Send(cachedResponse, messageID, clientAddr)
 	} else {
+		destinationTable := uint32(constants.Head)
 
 		internal_message_obj := protobuf.InternalMsg{
 			ClientAddress: &clientAddr,
 			KVRequest:     payload,
 			MessageID:     messageID,
 			Command:       uint32(constants.ProcessClientKVRequest), // TODO: unable
+			DestinationNodeTable: &destinationTable,
 		}
 
 		tm.coodinatorChan <- internal_message_obj

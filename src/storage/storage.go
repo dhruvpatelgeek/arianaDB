@@ -93,7 +93,7 @@ func New(tm *transport.TransportModule,
 	}
 	go sm.processStorageToStorageMessages()
 	go sm.processCoordinatorMessages()
-	// go sm.monitorKVStoreSize()
+	//go sm.monitorKVStoreSize()
 
 	return &sm
 }
@@ -142,21 +142,9 @@ func (sm *StorageService) processStorageToStorageMessages() {
 func (sm *StorageService) processCoordinatorMessages() {
 	for {
 		request := <-sm.coordinatorToStorageChannel
-		command := request.GetCommand()
-		switch constants.InternalMessageCommands(command) {
-		case constants.ProcessPropagatedKVRequest:
-			err := sm.processPropagatedKVRequest(&request)
-			if err != nil {
-				fmt.Printf("[Storage] Failed to process PropagatedKVRequest (%s)\n", err)
-			}
-
-		case constants.ProcessClientKVRequest:
-			err := sm.processClientKVRequest(&request)
-			if err != nil {
-				fmt.Printf("[Storage] Failed to process ClientKVRequest (%s)\n", err)
-			}
-		default:
-			fmt.Printf("[Storage] Received unrecognized command (%d) from Coordinator", command)
+		err := sm.processKVRequest(&request)
+		if err != nil {
+			fmt.Printf("[Storage] Failed to process PropagatedKVRequest (%s)\n", err)
 		}
 	}
 }
@@ -358,30 +346,20 @@ func (sm *StorageService) wipeoutDestinationTable(destination string, destinatio
 	return nil
 }
 
-func (sm *StorageService) processClientKVRequest(request *protobuf.InternalMsg) error {
-	kvStore, kvStoreLock := sm.headKVStore, sm.headKVStoreLock // note: hard-coded in case the request didn't set the table
-	err := sm.processKVRequest(request, true, kvStore, kvStoreLock)
-	return err
-}
-
-func (sm *StorageService) processPropagatedKVRequest(request *protobuf.InternalMsg) error {
-	tableSelection := constants.TableSelection(request.GetDestinationNodeTable())
-	kvStore, kvStoreLock, err := sm.getKVStore(tableSelection)
-	if err != nil {
-		return err
-	}
-	err = sm.processKVRequest(request, false, kvStore, kvStoreLock)
-	return err
-}
-
 /*	Client KVRequests are inserted into the Head KVStore.
 
 	TODO: confirm with the coordinator that when a client request arrives at the head of the correct node,
 	it will forward the exact InternalMsg forwarded by the transport layer.
 */
-func (sm *StorageService) processKVRequest(request *protobuf.InternalMsg, responseToClientRequired bool, kvStore map[string][]byte, kvStoreLock *sync.Mutex) error {
+func (sm *StorageService) processKVRequest(request *protobuf.InternalMsg) error {
+	tableSelection := constants.TableSelection(request.GetDestinationNodeTable())
+	kvStore, kvStoreLock, err := sm.getKVStore(tableSelection)
+	if err != nil {
+		return err
+	}
+
 	cast_req := &protobuf.KVRequest{}
-	err := proto.Unmarshal(request.KVRequest, cast_req)
+	err = proto.Unmarshal(request.KVRequest, cast_req)
 	if err != nil {
 		return err
 	}
@@ -401,7 +379,7 @@ func (sm *StorageService) processKVRequest(request *protobuf.InternalMsg, respon
 		case SHUTDOWN:
 			shutdown()
 		case WIPEOUT:
-			errCode = sm.wipeout(constants.Head)
+			errCode = sm.wipeout(tableSelection)
 		case IS_ALIVE:
 			errCode = is_alive()
 		case GET_PID:
@@ -414,7 +392,9 @@ func (sm *StorageService) processKVRequest(request *protobuf.InternalMsg, respon
 	} else {
 		errCode = SYS_OVRLD
 	}
-	if responseToClientRequired {
+
+	responseRequired := request.GetRespondToClient()
+	if responseRequired {
 		kvres := &protobuf.KVResponse{
 			ErrCode: &errCode,
 			Value:   value,
