@@ -3,14 +3,21 @@ package coordinator
 import (
 	"dht/google_protocol_buffer/pb/protobuf"
 	"dht/src/constants"
+	"strconv"
+
+	"dht/src/membership"
+
 	"dht/src/coordinatorAvailability"
+
 	"dht/src/replication"
 	"dht/src/storage"
 	"dht/src/structure"
 	"dht/src/transport"
 	"errors"
 	"fmt"
+	"time"
 
+	"github.com/google/uuid"
 	"google.golang.org/protobuf/proto"
 )
 
@@ -65,6 +72,8 @@ type CoordinatorService struct {
 	hostPort string
 	hostIPv4 string
 
+	gms *membership.MembershipService
+
 	//coordinatorAvailability. *CoordinatorAvailability
 	coordinatorAvailability          *coordinatorAvailability.CoordinatorAvailability
 	hasCompleteInitializedHeadTable  bool
@@ -72,7 +81,6 @@ type CoordinatorService struct {
 }
 
 func New(
-	gmsToCoordinatorChannel chan structure.GMSEventMessage,
 	transportToCoordinatorChannel chan protobuf.InternalMsg,
 	coordinatorToStorageChannel chan protobuf.InternalMsg,
 	coordinatorToReplicationChannel chan structure.GMSEventMessage,
@@ -84,10 +92,11 @@ func New(
 	storageService *storage.StorageService,
 
 	hostIP string,
-	hostPort string) (*CoordinatorService, error) {
+	hostPort string,
+
+	gms *membership.MembershipService) (*CoordinatorService, error) {
 
 	coordinator := new(CoordinatorService)
-	coordinator.gmsEventChannel = gmsToCoordinatorChannel
 	coordinator.incomingMessagesChannel = transportToCoordinatorChannel
 	coordinator.toStorageChannel = coordinatorToStorageChannel
 	coordinator.toReplicationChannel = coordinatorToReplicationChannel
@@ -104,6 +113,8 @@ func New(
 	coordinator.hostPort = hostPort
 	coordinator.hostIPv4 = hostIP + ":" + hostPort
 
+	coordinator.gms = gms
+
 	var err error
 	coordinator.coordinatorAvailability, err = coordinatorAvailability.New()
 	if err != nil {
@@ -116,6 +127,10 @@ func New(
 	go coordinator.processIncomingMessages()
 	// go coordinator.processGMSEvent()
 	go coordinator.processRaftMessages()
+
+	// start the time out thread
+	go coordinator.setTimeOut()
+
 	return coordinator, nil
 }
 
@@ -129,6 +144,7 @@ func New(
 	- re-route to new destination
 */
 func (coordinator *CoordinatorService) processIncomingMessages() {
+	// requestNum := 1
 	for {
 		// retrieve incoming message
 		incomingMessage := <-coordinator.incomingMessagesChannel
@@ -145,20 +161,47 @@ func (coordinator *CoordinatorService) processIncomingMessages() {
 			coordinator.processClientRequest(incomingMessage, kvRequest)
 		case constants.ProcessPropagatedKVRequest:
 			coordinator.processPropagatedRequest(incomingMessage, kvRequest)
+		case 69:
+			// TODO: so the coordinator is responsible for deleting stuff from gms & adding stuff to gms?
+			if *incomingMessage.JoinType == "FAIL" {
+				coordinator.gms.DeleteItem(*incomingMessage.FailIP)
+				if *incomingMessage.FailOption == constants.GrandSuccessor {
+					coordinator.isPredeccessorPredeccessorFailed = true
+				} else {
+					_ = coordinator.processFailMigrationRequest(*incomingMessage.FailIP)
+				}
+				fmt.Println("[RECIVED REQUEST]  AS ", *incomingMessage.FailOption, "OF A FAILURE")
+			} else {
+				_ = coordinator.processJoinMigrationRequest()
+				fmt.Println("[RECIVED REQUEST] AS ", *incomingMessage.JoinType)
+			}
+		case 70:
+			if *incomingMessage.JoinType == "FAIL" {
+				coordinator.gms.DeleteItem(*incomingMessage.FailIP)
+			}
+			coordinator.replicateTable(constants.Head)
+		case 71:
+			coordinator.hasCompleteInitializedHeadTable = true
+		case 72:
+			coordinator.isPredeccessorPredeccessorFailed = false
 		}
 
 	}
 }
 
 func (coordinator *CoordinatorService) processClientRequest(incomingMessage protobuf.InternalMsg, kvRequest *protobuf.KVRequest) {
-	destinationAddress := coordinator.replicationService.GetNextNode(string(kvRequest.Key))
+	destinationAddress := coordinator.replicationService.FindSuccessorNode(string(kvRequest.Key))
 	destinationTable := uint32(constants.Head)
 	respondToClient := false
 
 	if selfIP := coordinator.hostIPv4; destinationAddress == selfIP {
 		coordinator.toStorageChannel <- incomingMessage
-		destinationAddress = coordinator.replicationService.GetNextNode(selfIP)
+		destinationAddress = coordinator.replicationService.FindSuccessorNode(selfIP)
 		destinationTable = uint32(constants.Middle)
+	}
+
+	if kvRequest.GetCommand() == 4 {
+		return
 	}
 
 	outgoingMessage := incomingMessage
@@ -174,14 +217,14 @@ func (coordinator *CoordinatorService) processPropagatedRequest(incomingMessage 
 
 	currTable := incomingMessage.GetDestinationNodeTable()
 	if constants.TableSelection(currTable) != constants.Tail {
-		destinationAddress := coordinator.replicationService.GetNextNode(coordinator.hostIPv4)
+		destinationAddress := coordinator.replicationService.FindSuccessorNode(coordinator.hostIPv4)
 		destinationTable := uint32(constants.TableSelection(incomingMessage.GetDestinationNodeTable() + 1))
 		respondToClient := false
 
 		if destinationTable == uint32(constants.Tail) {
 			respondToClient = true
 		}
-		
+
 		outgoingMessage := incomingMessage
 		outgoingMessage.Command = uint32(constants.ProcessPropagatedKVRequest)
 		outgoingMessage.DestinationNodeTable = &destinationTable
@@ -201,6 +244,19 @@ func (coordinator *CoordinatorService) propagateRequest(outgoingMessage protobuf
 	coordinator.transport.SendCoordinatorToCoordinator(marshalledOutgoingMessage, []byte("reques"+string(outgoingMessage.MessageID)), destinationAddress)
 }
 
+// Time out:
+func (coordinator *CoordinatorService) setTimeOut() {
+
+	for {
+		time.Sleep(7000 * time.Millisecond)
+		if coordinator.hasCompleteInitializedHeadTable {
+			break
+		}
+
+		coordinator.gms.Bootstrap() // TODO:
+	}
+}
+
 //////////////////////////////////////////////////////////////////////////////////////////////////////////
 // Join Request:
 
@@ -215,7 +271,7 @@ func (coordinator *CoordinatorService) processJoinMigrationRequest() error {
 
 	// distribute keys from local to the newly joined node
 	predecessor := coordinator.replicationService.FindPredecessorNode(coordinator.hostIPv4)
-	err := coordinator.distributeKeys(predecessor, constants.Head)
+	err := coordinator.distributeKeys(predecessor)
 	if err != nil {
 		return err
 		// TODO: consider what we would do if we failed to distributeKeys
@@ -230,6 +286,7 @@ func (coordinator *CoordinatorService) processJoinMigrationRequest() error {
 		- note: for buffered join requests, "Leader" will process buffered request once the migration stuff is complete.
 		- TODO: replace Propagating with Migration...
 	*/
+	coordinator.sentCompleteInitializedHeadTableToNewNode(predecessor)
 
 	// mark coordinator as available to accept new joint node.u
 	coordinator.coordinatorAvailability.FinishedDistributeKeys()
@@ -258,20 +315,31 @@ func (coordinator *CoordinatorService) processJoinMigrationRequest() error {
 	return nil
 }
 
+func (coordinator *CoordinatorService) sentCompleteInitializedHeadTableToNewNode(destinationIPV4 string) error {
+	msg := protobuf.InternalMsg{
+		MessageID: structure.GenerateMessageID(),
+
+		Command: 71,
+	}
+
+	marshalledMsg, error := coordinator.marshalInternalMessage(msg)
+	if error != nil {
+		return error
+	}
+	coordinator.transport.ReplicationRequest(marshalledMsg, parsePort(destinationIPV4, 1))
+
+	return nil
+}
+
 // change the head KV-store of the predecessor and itself:
 // TODO: this is for redistributing the local head table to the newly joined node
-func (coordinator *CoordinatorService) distributeKeys(predecessor string, tableSelection constants.TableSelection) error {
-	lowerBound, upperBound := coordinator.replicationService.GetMigrationRange(predecessor)
+func (coordinator *CoordinatorService) distributeKeys(predecessor string) error {
+	lowerbound, upperbound := coordinator.replicationService.GetMigrationRange(predecessor)
 
-	//TODO: call function
-	toStorage := protobuf.InternalMsg{
-		MessageID:                   structure.GenerateMessageID(),
-		Command:                     uint32(constants.ProcessKeyMigrationRequest),
-		MigrationRangeLowerbound:    &lowerBound,
-		MigrationRangeUpperbound:    &upperBound,
-		MigrationDestinationAddress: &(predecessor),
+	err := coordinator.storageService.MigratePartialTable(predecessor, constants.Head, constants.Head, lowerbound, upperbound)
+	if err != nil {
+		return err
 	}
-	coordinator.toStorageChannel <- toStorage
 
 	return nil
 }
@@ -299,8 +367,61 @@ func (coordinator *CoordinatorService) distributeKeys(predecessor string, tableS
 // TODO: come up with a better name for ipv (the guy to whom we send the request)
 func (coordinator *CoordinatorService) sendReplicationRequest(destinationIPV4 string, tableSelection constants.TableSelection) error {
 	// figured out who is my predecessor:
+	joinType := "JOINED"
+	msg := protobuf.InternalMsg{
+		MessageID: []byte(uuid.New().String()),
+
+		//NOT SURE IF THERE IS AN ERROR OCCUR HERE:
+		Command:  70,
+		JoinType: &joinType,
+	}
+
+	marshalledMsg, error := coordinator.marshalInternalMessage(msg)
+	if error != nil {
+		return error
+	}
+	coordinator.transport.ReplicationRequest(marshalledMsg, parsePort(destinationIPV4, 1))
 
 	return nil
+}
+
+func (coordinator *CoordinatorService) sendReplicationRequestAndUpdateMembershipList(failIP string, destinationIPV4 string, tableSelection constants.TableSelection) error {
+	// figured out who is my predecessor:
+	joinType := "FAIL"
+	msg := protobuf.InternalMsg{
+		MessageID: []byte(uuid.New().String()),
+
+		//NOT SURE IF THERE IS AN ERROR OCCUR HERE:
+		Command:  70,
+		JoinType: &joinType,
+		FailIP:   &failIP,
+	}
+
+	marshalledMsg, error := coordinator.marshalInternalMessage(msg)
+	if error != nil {
+		return error
+	}
+	coordinator.transport.ReplicationRequest(marshalledMsg, parsePort(destinationIPV4, 1))
+
+	return nil
+}
+
+func parsePort(address string, offset int) string {
+	var port_num string
+	for i := 0; i < len(address); i++ {
+		if address[i] == ':' {
+			port_num = address[i+1:]
+			casted_port, err := strconv.Atoi(port_num)
+			if err != nil {
+				fmt.Println("ERROR CASTING")
+			}
+			casted_port += offset
+			new_address := address[:i+1] + strconv.Itoa(casted_port)
+			//fmt.Println("NEW ADDRESS->",new_address)
+			return new_address
+		}
+	}
+	return "127.0.0.1:3000" // dummy port
 }
 
 func (coordinator *CoordinatorService) replicateTable(constants.TableSelection) error {
@@ -310,16 +431,16 @@ func (coordinator *CoordinatorService) replicateTable(constants.TableSelection) 
 	}
 
 	// TODO: send internal message to the storage layer to send the head replication to its successor:
-	successor := ""
-	err := coordinator.storageService.MigrateTable(successor, constants.Head, constants.Middle)
+	successor := coordinator.replicationService.FindSuccessorNode(coordinator.hostIPv4)
+	err := coordinator.storageService.MigrateEntireTable(successor, constants.Head, constants.Middle)
 	if err != nil {
 		return err
 	}
 
 	// TODO: send internal message to the storage layer to send the head replication to the successor of the current successor
-	greatSuccessor := ""
+	greatSuccessor := coordinator.replicationService.FindSuccessorNode(successor)
 
-	err = coordinator.storageService.MigrateTable(greatSuccessor, constants.Head, constants.Tail)
+	err = coordinator.storageService.MigrateEntireTable(greatSuccessor, constants.Head, constants.Tail)
 	if err != nil {
 		return err
 	}
@@ -330,7 +451,7 @@ func (coordinator *CoordinatorService) replicateTable(constants.TableSelection) 
 ///////////////////////////////////////////////////////////////////////////////////////////
 // failure request
 
-func (coordinator *CoordinatorService) processFailMigrationRequest() error {
+func (coordinator *CoordinatorService) processFailMigrationRequest(failIP string) error {
 	// merge local tables
 	coordinator.hasCompleteInitializedHeadTable = false
 	if !coordinator.isPredeccessorPredeccessorFailed {
@@ -341,20 +462,31 @@ func (coordinator *CoordinatorService) processFailMigrationRequest() error {
 
 	coordinator.isPredeccessorPredeccessorFailed = false
 	coordinator.hasCompleteInitializedHeadTable = true
+	// TODO: send an internal message to its successor saying command 71
+	successor := coordinator.replicationService.FindSuccessorNode(coordinator.hostIPv4)
+	internalMsg := &protobuf.InternalMsg{
+		MessageID: []byte(uuid.New().String()),
+		Command:   72,
+	}
+	marshalledMsg, error := coordinator.marshalInternalMessage(*internalMsg)
+	if error != nil {
+		return error
+	}
+	coordinator.transport.ReplicationRequest(marshalledMsg, parsePort(successor, 1))
 
 	//
 	// ask its predecessor to do migrating
 	// TODO: create a function for sending a request to replicate its head table
 	// TODO: grab the predecessor from the replication service
 	predecessor := coordinator.replicationService.FindPredecessorNode(coordinator.hostIPv4)
-	err := coordinator.sendReplicationRequest(predecessor, constants.Head)
+	err := coordinator.sendReplicationRequestAndUpdateMembershipList(failIP, predecessor, constants.Head)
 	if err != nil {
 		return err
 	}
 
 	// ask its predecessor's predecessor to do migrating (i.e.: like great-grandfather?)
 	greatPredecessor := coordinator.replicationService.FindPredecessorNode(predecessor)
-	err = coordinator.sendReplicationRequest(greatPredecessor, constants.Head)
+	err = coordinator.sendReplicationRequestAndUpdateMembershipList(failIP, greatPredecessor, constants.Head)
 	if err != nil {
 		return err
 	}
@@ -397,4 +529,12 @@ func (coordinator *CoordinatorService) processRaftMessages() {
 		}
 	}
 
+}
+
+func (coordinator *CoordinatorService) marshalInternalMessage(msg protobuf.InternalMsg) ([]byte, error) {
+	byteMsg, err := proto.Marshal(&msg)
+	if err != nil {
+		return nil, err
+	}
+	return byteMsg, nil
 }

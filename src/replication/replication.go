@@ -86,7 +86,7 @@ func (rs *ReplicationService) findPredecessorFromHash(hash *big.Int) string {
 // @Description: Determines which node is responsible for the given key
 // @param key
 // @return string - Location of node responsible for the given key
-func (rs *ReplicationService) GetNextNode(key string) string {
+func (rs *ReplicationService) FindSuccessorNode(key string) string {
 	// TODO: for the same key, this is giving different results
 	if len(key) == 0 {
 		return rs.hostIPv4

@@ -2,54 +2,55 @@ package raft
 
 import (
 	"dht/google_protocol_buffer/pb/protobuf"
+	"dht/src/constants"
 	"dht/src/membership"
 	"dht/src/replication"
 	"dht/src/transport"
 	"encoding/json"
 	"fmt"
-	"github.com/fatih/color"
-	"github.com/golang/protobuf/proto"
-	"github.com/looplab/fsm"
 	"log"
 	"math/rand"
 	"strconv"
 	"sync"
 	"time"
+
+	"github.com/fatih/color"
+	"github.com/golang/protobuf/proto"
+	"github.com/looplab/fsm"
 )
 
 //DEBUG-------------------------
-var debug=false;
+var debug = false
+
 //------------------------------
 
-
 type raftnode struct {
-	node_ip  string
-	timeoutMutex sync.Mutex
-	leaderMutex sync.Mutex
-	mapMutex sync.Mutex
-	pingAck int
-	timeout time.Duration
-	leader_ip string
-	voteRec int
-	voteTermMap map[int32]int32
-	termNum int32
+	node_ip         string
+	timeoutMutex    sync.Mutex
+	leaderMutex     sync.Mutex
+	mapMutex        sync.Mutex
+	pingAck         int
+	timeout         time.Duration
+	leader_ip       string
+	voteRec         int
+	voteTermMap     map[int32]int32
+	termNum         int32
 	fromCoordinator chan protobuf.RaftPayload
-	FSM *fsm.FSM
+	FSM             *fsm.FSM
 
-	gmsPtr *membership.MembershipService
+	gmsPtr       *membership.MembershipService
 	transportPtr *transport.TransportModule
-	replication *replication.ReplicationService
-
+	replication  *replication.ReplicationService
 
 	// MAP IP ADDRESS TO STATUS
 	netMapMutex sync.Mutex
 	/*
-	JOINED -> node just joined
+		JOINED -> node just joined
 
-	LEFT -> node failed
-	-----------------------------
-	COMMIT -> node added to network
-	 */
+		LEFT -> node failed
+		-----------------------------
+		COMMIT -> node added to network
+	*/
 	netMap map[string]string
 	// on event status change call the migration
 	procressingStruct []string
@@ -59,62 +60,65 @@ type raftnode struct {
 //maximum netowkr down time is 20 seconds
 var MIN_TIME = 6
 var MAX_TIME = 16
-var REFRESH_RATE =250*time.Millisecond
-var NETWORK_DELAY=5 // added the network delay veriable
-var GAIN=1*time.Second
+var REFRESH_RATE = 250 * time.Millisecond
+var NETWORK_DELAY = 5 // added the network delay veriable
+var GAIN = 1 * time.Second
+
 //-------------------------------------
 // COLOR MESSAGES-----------------------
 var LDprint = color.New(color.FgBlue).Add(color.ReverseVideo)
-var CDprint=color.New(color.FgYellow)
-var FWprint=color.New(color.FgMagenta).Add(color.ReverseVideo)
-var Xprint=color.New(color.ReverseVideo)
-var RXprint=color.New(color.FgRed).Add(color.ReverseVideo)
-var ERR=color.New(color.FgYellow).Add(color.ReverseVideo)
-var NCPrint=color.New(color.FgHiCyan)
+var CDprint = color.New(color.FgYellow)
+var FWprint = color.New(color.FgMagenta).Add(color.ReverseVideo)
+var Xprint = color.New(color.ReverseVideo)
+var RXprint = color.New(color.FgRed).Add(color.ReverseVideo)
+var ERR = color.New(color.FgYellow).Add(color.ReverseVideo)
+var NCPrint = color.New(color.FgHiCyan)
+
 //-------------------------------------
 
 //INIT-----------------------------------------
 
-func New(	gmsPtr *membership.MembershipService,
+func New(gmsPtr *membership.MembershipService,
 	transportPtr *transport.TransportModule,
 	replication *replication.ReplicationService,
 	nodeIp string,
 	port int,
-	coordinatorToRaft chan protobuf.RaftPayload){
+	coordinatorToRaft chan protobuf.RaftPayload) {
 
 	rand.Seed(time.Now().UnixNano())
-	r:=rand.Intn(MAX_TIME - MIN_TIME + 1) + MIN_TIME
-	timeout:=time.Duration(r) * time.Second
+	r := rand.Intn(MAX_TIME-MIN_TIME+1) + MIN_TIME
+	timeout := time.Duration(r) * time.Second
 
-	R2RPort:=port+2;
+	R2RPort := port + 2
 
-	selfAddr:=nodeIp
-	selfAddr=selfAddr+":"
-	selfAddr+=strconv.Itoa(R2RPort)
+	selfAddr := nodeIp
+	selfAddr = selfAddr + ":"
+	selfAddr += strconv.Itoa(R2RPort)
 
-	raftStateMachine := RaftStateMachine(coordinatorToRaft,selfAddr,timeout)
-	raftStateMachine.gmsPtr=gmsPtr
-	raftStateMachine.transportPtr=transportPtr
-	raftStateMachine.replication=replication
+	raftStateMachine := RaftStateMachine(coordinatorToRaft, selfAddr, timeout)
+	raftStateMachine.gmsPtr = gmsPtr
+	raftStateMachine.transportPtr = transportPtr
+	raftStateMachine.replication = replication
 	raftStateMachine.startUpPromt()
-	raftStateMachine.voteRec=0
-	raftStateMachine.voteTermMap= make(map[int32]int32)
-	raftStateMachine.netMap=make(map[string]string)
-	raftStateMachine.termNum=0;
+	raftStateMachine.voteRec = 0
+	raftStateMachine.voteTermMap = make(map[int32]int32)
+	raftStateMachine.netMap = make(map[string]string)
+	raftStateMachine.termNum = 0
 	err := raftStateMachine.FSM.Event("init")
 	if err != nil {
 		fmt.Println(err)
 	}
-	go raftStateMachine.incomingMsgReader();
+	go raftStateMachine.incomingMsgReader()
 }
+
 //reference from
 //https://github.com/looplab/fsm/blob/v0.2.0/fsm.go#L88
-func RaftStateMachine(coordinatorToRaft chan protobuf.RaftPayload,node_ip_add string,_timeout time.Duration) *raftnode {
+func RaftStateMachine(coordinatorToRaft chan protobuf.RaftPayload, node_ip_add string, _timeout time.Duration) *raftnode {
 	currNode := &raftnode{
-		node_ip: node_ip_add,
-		timeout: _timeout,
-		leader_ip: "NULL",
-		fromCoordinator:coordinatorToRaft,
+		node_ip:         node_ip_add,
+		timeout:         _timeout,
+		leader_ip:       "NULL",
+		fromCoordinator: coordinatorToRaft,
 	}
 
 	currNode.FSM = fsm.NewFSM(
@@ -152,23 +156,23 @@ func RaftStateMachine(coordinatorToRaft chan protobuf.RaftPayload,node_ip_add st
 			//
 			// 8. after_event - called after all events
 
-			"before_leader_to_follower":func(e *fsm.Event) {
+			"before_leader_to_follower": func(e *fsm.Event) {
 				CDprint.Println("LEADER STEPS DOWN")
 				defer color.Unset()
 				currNode.followerFunc(e)
 			},
-			"before_candidate_to_follower":func(e *fsm.Event) {
+			"before_candidate_to_follower": func(e *fsm.Event) {
 				CDprint.Println("FAILED TO WIN ELECTION")
 			},
-			"enter_follower":func(e *fsm.Event) {
+			"enter_follower": func(e *fsm.Event) {
 				defer color.Unset()
 				currNode.followerFunc(e)
 			},
-			"enter_candidate":func(e *fsm.Event) {
+			"enter_candidate": func(e *fsm.Event) {
 				defer color.Unset()
 				currNode.candidateFunc(e)
 			},
-			"enter_leader":func(e *fsm.Event) {
+			"enter_leader": func(e *fsm.Event) {
 				defer color.Unset()
 				currNode.leaderFunc(e)
 			},
@@ -176,7 +180,6 @@ func RaftStateMachine(coordinatorToRaft chan protobuf.RaftPayload,node_ip_add st
 				defer color.Unset()
 				currNode.enterState(e)
 			},
-
 		},
 	)
 
@@ -185,22 +188,22 @@ func RaftStateMachine(coordinatorToRaft chan protobuf.RaftPayload,node_ip_add st
 
 //MAIN STATE FUNCTIONS--------------------------------
 //startup promt
-func (this *raftnode) startUpPromt(){
+func (this *raftnode) startUpPromt() {
 	defer color.Unset()
-	Xprint.Println("[", this.node_ip,"]"," has initilized as a [follower] with timeout [", this.timeout,"]")
+	Xprint.Println("[", this.node_ip, "]", " has initilized as a [follower] with timeout [", this.timeout, "]")
 }
 
 // called after each state change
 func (this *raftnode) enterState(fsm_event *fsm.Event) {
-	Xprint.Println("STATE TRANSITION [", this.node_ip,"]",fsm_event.Src,">>",fsm_event.Dst)
+	Xprint.Println("STATE TRANSITION [", this.node_ip, "]", fsm_event.Src, ">>", fsm_event.Dst)
 }
 
 // called after state has changed to follower
 func (this *raftnode) followerFunc(fsm_event *fsm.Event) {
 	this.leaderMutex.Lock()
-	termNumber:=this.termNum
+	termNumber := this.termNum
 	this.leaderMutex.Unlock()
-	FWprint.Println("TERM >>[",termNumber,"] FOLLOWING [", this.leader_ip,"]")
+	FWprint.Println("TERM >>[", termNumber, "] FOLLOWING [", this.leader_ip, "]")
 	go this.timeoutToCandidate(fsm_event)
 }
 
@@ -214,164 +217,165 @@ func (this *raftnode) candidateFunc(fsm_event *fsm.Event) {
 
 // called after state has changed to leader
 func (this *raftnode) leaderFunc(fsm_event *fsm.Event) {
-	LDprint.Println(" TERM",this.termNum,">>",this.FSM.Current())
-	netWatcher:=this.seekChangesToNetworkStructure()
-	for{
-		if(this.FSM.Is("leader")){
+	LDprint.Println(" TERM", this.termNum, ">>", this.FSM.Current())
+	netWatcher := this.seekChangesToNetworkStructure()
+	for {
+		if this.FSM.Is("leader") {
 			this.pingAllNodes(fsm_event)
 			netWatcher()
-			ttSleep:=MIN_TIME-NETWORK_DELAY
-			sleep_time:=time.Duration(ttSleep)*time.Second
+			ttSleep := MIN_TIME - NETWORK_DELAY
+			sleep_time := time.Duration(ttSleep) * time.Second
 			time.Sleep(sleep_time)
-		} else{
+		} else {
 			LDprint.Println("[LEADER REVERT]")
-			break;
+			break
 		}
 	}
 }
+
 //----------------------------------------------------
 
 //HELPER FUNCTIONS------------------------------------
-func (this *raftnode) timeoutToCandidate(fsm_event *fsm.Event){
+func (this *raftnode) timeoutToCandidate(fsm_event *fsm.Event) {
 	this.timeoutMutex.Lock()
-	print_timeout:=this.timeout
+	print_timeout := this.timeout
 	this.timeoutMutex.Unlock()
-	FWprint.Println(this.node_ip,"timeout is",print_timeout);
-	for{
+	FWprint.Println(this.node_ip, "timeout is", print_timeout)
+	for {
 		this.timeoutMutex.Lock()
-		this.timeout-=REFRESH_RATE
+		this.timeout -= REFRESH_RATE
 		this.timeoutMutex.Unlock()
 		time.Sleep(REFRESH_RATE)
-		if(this.timeout<100*time.Millisecond){
-			break;
+		if this.timeout < 100*time.Millisecond {
+			break
 		}
 	}
 	// STATE TRANSITION INTO THE CANDIDATE STATE
 	this.FSM.Event("follower_to_candidate")
 }
-func (this *raftnode) timeoutToFollower(fsm_event *fsm.Event){
-	time.Sleep(10*time.Second)
-	if(this.FSM.Is("candidate")){
+func (this *raftnode) timeoutToFollower(fsm_event *fsm.Event) {
+	time.Sleep(10 * time.Second)
+	if this.FSM.Is("candidate") {
 		CDprint.Println("CANDIDATE TIMED OUT")
 		this.reset()
 		this.FSM.Event("candidate_to_follower")
 	}
 }
 
-func (this *raftnode) incomingMsgReader(){
-	msg:=protobuf.RaftPayload{}
-	for{
+func (this *raftnode) incomingMsgReader() {
+	msg := protobuf.RaftPayload{}
+	for {
 		select {
-		case msg=<-this.fromCoordinator:
+		case msg = <-this.fromCoordinator:
 
-			if(msg.Type=="PING"){
-				var newLeader =false
+			if msg.Type == "PING" {
+				var newLeader = false
 				this.reset()
-				if(this.FSM.Is("candidate")){
+				if this.FSM.Is("candidate") {
 					CDprint.Println("EXSISTING LEADER DETECTED")
 					this.FSM.Event("candidate_to_follower")
-				} else if(this.FSM.Is("leader")) {
+				} else if this.FSM.Is("leader") {
 					this.FSM.Event("leader_to_follower")
 				}
 				this.netMapMutex.Lock()
 				err := json.Unmarshal(msg.Log, &this.netMap)
-				if(err!=nil){
+				if err != nil {
 					ERR.Println("ERROR MAP UNLOAD")
 				}
 
-				if(debug){
-					var commit,fail,join,total int
-					commit=0
-					join=0
-					total=0
-					fail=0
+				if debug {
+					var commit, fail, join, total int
+					commit = 0
+					join = 0
+					total = 0
+					fail = 0
 					for ipAddr, value := range this.netMap {
 						total++
-						if(value=="COMMIT"){
+						if value == "COMMIT" {
 							commit++
 						}
-						if(value=="JOINED"){
+						if value == "JOINED" {
 							join++
-							ERR.Println("NODE JOIN ",ipAddr)
+							ERR.Println("NODE JOIN ", ipAddr)
 						}
-						if(value=="FAIL"){
+						if value == "FAIL" {
 							fail++
-							ERR.Println("NODE FAILED ",ipAddr)
+							ERR.Println("NODE FAILED ", ipAddr)
 						}
 					}
-					ERR.Println("COMMIT:",commit," JOIN:",join," FAIL:",fail," TOTAL:",total);
+					ERR.Println("COMMIT:", commit, " JOIN:", join, " FAIL:", fail, " TOTAL:", total)
 				}
 
 				this.netMapMutex.Unlock()
 				this.leaderMutex.Lock()
-				this.termNum=msg.TermNum;
-				if(this.leader_ip=="NULL"){
-					this.leader_ip=msg.SenderIP
-					FWprint.Println("[INIT] FOLLOWING->",msg.SenderIP)
-				} else if(this.leader_ip!=msg.SenderIP){
-					this.leader_ip=msg.SenderIP
-					newLeader=true;
-					FWprint.Println("FOLLOWING->",msg.SenderIP)
+				this.termNum = msg.TermNum
+				if this.leader_ip == "NULL" {
+					this.leader_ip = msg.SenderIP
+					FWprint.Println("[INIT] FOLLOWING->", msg.SenderIP)
+				} else if this.leader_ip != msg.SenderIP {
+					this.leader_ip = msg.SenderIP
+					newLeader = true
+					FWprint.Println("FOLLOWING->", msg.SenderIP)
 				}
 				this.leaderMutex.Unlock()
-				if(newLeader){
-					go this.setLeader(msg.SenderIP)
+				if newLeader {
+					go this.setLeader(msg.SenderIP) // TODO: spawns a new working thread?
 				}
-			}else if(msg.Type=="VOTEASK"){
+			} else if msg.Type == "VOTEASK" {
 				//Xprint.Println("VOTE ASKED")
 				var response string
 				this.mapMutex.Lock()
-				_ ,exist := this.voteTermMap[msg.TermNum]
+				_, exist := this.voteTermMap[msg.TermNum]
 				if exist {
-					response="NO"
+					response = "NO"
 				} else {
-					response="YES"
-					this.voteTermMap[msg.TermNum]=1;
+					response = "YES"
+					this.voteTermMap[msg.TermNum] = 1
 				}
 				this.mapMutex.Unlock()
 
-				electionRes:=&protobuf.RaftPayload{
-					Type:                 "VOTERES",
-					VoteRes:              response,
+				electionRes := &protobuf.RaftPayload{
+					Type:    "VOTERES",
+					VoteRes: response,
 				}
-				marshalled_electionRes, err :=proto.Marshal(electionRes)
-				if(err!=nil){
+				marshalled_electionRes, err := proto.Marshal(electionRes)
+				if err != nil {
 					fmt.Println("[CRITIAL] CASTING ERROR")
 				}
-				this.transportPtr.R2RSend(marshalled_electionRes,msg.SenderIP)
-			} else if(msg.Type=="VOTERES"){
+				this.transportPtr.R2RSend(marshalled_electionRes, msg.SenderIP)
+			} else if msg.Type == "VOTERES" {
 				//CDprint.Println("VOTE RECIVED")
-				if(msg.VoteRes=="YES"){
-					this.voteRec+=1
+				if msg.VoteRes == "YES" {
+					this.voteRec += 1
 				}
-				if(len(this.gmsPtr.GetAllNodes())==this.voteRec){
+				if len(this.gmsPtr.GetAllNodes()) == this.voteRec {
 					this.FSM.Event("candidate_to_leader")
 				}
-			} else if(msg.Type=="REVOLT"){
+			} else if msg.Type == "REVOLT" {
 				RXprint.Println("REVOLT DETECTED")
-				if(this.FSM.Is("leader")){
+				if this.FSM.Is("leader") {
 					this.FSM.Event("leader_to_follower")
 				}
 			}
 		}
 	}
-	fmt.Println("CRITICAL ERROR, INBOUND COMMUNICATION HALTED");
+	fmt.Println("CRITICAL ERROR, INBOUND COMMUNICATION HALTED")
 }
 
-func (this *raftnode) reset(){
+func (this *raftnode) reset() {
 	rand.Seed(time.Now().UnixNano())
-	r:=rand.Intn(MAX_TIME - MIN_TIME + 1) + MIN_TIME
-	timeout:=time.Duration(r) * time.Second
+	r := rand.Intn(MAX_TIME-MIN_TIME+1) + MIN_TIME
+	timeout := time.Duration(r) * time.Second
 	this.timeoutMutex.Lock()
-	this.timeout=timeout
+	this.timeout = timeout
 	this.timeoutMutex.Unlock()
 }
 
-func (this *raftnode) askForVotes(fsm_event *fsm.Event){
+func (this *raftnode) askForVotes(fsm_event *fsm.Event) {
 	this.leaderMutex.Lock()
-	this.termNum++;
+	this.termNum++
 	this.leaderMutex.Unlock()
-	electionPage:=&protobuf.RaftPayload{
+	electionPage := &protobuf.RaftPayload{
 		Type:                 "VOTEASK",
 		SenderIP:             this.node_ip,
 		VoteRes:              "",
@@ -380,35 +384,33 @@ func (this *raftnode) askForVotes(fsm_event *fsm.Event){
 		Log:                  nil,
 	}
 
-	marshalled_electionPage, err :=proto.Marshal(electionPage)
-	if(err!=nil){
+	marshalled_electionPage, err := proto.Marshal(electionPage)
+	if err != nil {
 		fmt.Println("[CRITIAL] CASTING ERROR")
 	}
-	nodeLists:=this.gmsPtr.GetAllNodes()
-
-
+	nodeLists := this.gmsPtr.GetAllNodes()
 
 	var currPort string
-	this.voteRec=1 // votes for yourself
+	this.voteRec = 1 // votes for yourself
 
-	if(len(nodeLists)==1){
+	if len(nodeLists) == 1 {
 		this.FSM.Event("candidate_to_leader")
 	}
 	// then ask eveyone else ot vote for you
 	for i := 0; i < len(nodeLists); i++ {
-		currPort=parsePort(nodeLists[i],2)
-		if(currPort!=this.node_ip){
+		currPort = parsePort(nodeLists[i], 2)
+		if currPort != this.node_ip {
 			//CDprint.Println("ASKING for VOTES FROM ",currPort)
-			this.transportPtr.R2RSend(marshalled_electionPage,currPort)
+			this.transportPtr.R2RSend(marshalled_electionPage, currPort)
 		}
 	}
 }
-func (this *raftnode) pingAllNodes(fsm_event *fsm.Event){
+func (this *raftnode) pingAllNodes(fsm_event *fsm.Event) {
 	this.netMapMutex.Lock()
-		current_net_string_struct, err :=json.Marshal(this.netMap)
+	current_net_string_struct, err := json.Marshal(this.netMap)
 	this.netMapMutex.Unlock()
 
-	electionPage:=&protobuf.RaftPayload{
+	electionPage := &protobuf.RaftPayload{
 		Type:                 "PING",
 		SenderIP:             this.node_ip,
 		VoteRes:              "",
@@ -417,85 +419,99 @@ func (this *raftnode) pingAllNodes(fsm_event *fsm.Event){
 		Log:                  current_net_string_struct,
 	}
 
-	marshalled_electionPage, err :=proto.Marshal(electionPage)
-	if(err!=nil){
+	marshalled_electionPage, err := proto.Marshal(electionPage)
+	if err != nil {
 		fmt.Println("[CRITIAL] CASTING ERROR")
 	}
-	nodeLists:=this.gmsPtr.GetAllNodes()
+	nodeLists := this.gmsPtr.GetAllNodes()
 	var currPort string
 	for i := 0; i < len(nodeLists); i++ {
-		currPort=parsePort(nodeLists[i],2)
-		if(currPort!=this.node_ip){
-			this.transportPtr.R2RSend(marshalled_electionPage,currPort)
+		currPort = parsePort(nodeLists[i], 2)
+		if currPort != this.node_ip {
+			this.transportPtr.R2RSend(marshalled_electionPage, currPort)
 		}
 	}
 }
 
-func(this *raftnode) setLeader(senderAddr string){
-	time.Sleep(5*time.Second)
-	var flag =false;
+func (this *raftnode) setLeader(senderAddr string) {
+	time.Sleep(5 * time.Second)
+	var flag = false
 	this.leaderMutex.Lock()
-	if(this.leader_ip!=senderAddr){
-		flag=true
+	if this.leader_ip != senderAddr {
+		flag = true
 	}
 	this.leaderMutex.Unlock()
 
-	if(flag){
-		RXprint.Println("ATTEMPTING TO ASSASSINATE THE CURRENT LEADER",senderAddr)
-		revolution:=&protobuf.RaftPayload{
-			Type:                 "REVOLT",
-			SenderIP: 			  this.node_ip,
-			VoteRes:              "",
-			Log:                  nil,
+	if flag {
+		RXprint.Println("ATTEMPTING TO ASSASSINATE THE CURRENT LEADER", senderAddr)
+		revolution := &protobuf.RaftPayload{
+			Type:     "REVOLT",
+			SenderIP: this.node_ip,
+			VoteRes:  "",
+			Log:      nil,
 		}
 
-		marshalled_revolution, err :=proto.Marshal(revolution)
-		if(err != nil){
-			log.Println("[REVOLT ERR]",err)
+		marshalled_revolution, err := proto.Marshal(revolution)
+		if err != nil {
+			log.Println("[REVOLT ERR]", err)
 		}
-		this.transportPtr.R2RSend(marshalled_revolution,senderAddr)
+		this.transportPtr.R2RSend(marshalled_revolution, senderAddr)
 	}
 }
-func parsePort(address string,offset int) string{
+func parsePort(address string, offset int) string {
 	var port_num string
-	for i:=0;i< len(address);i++{
-		if(address[i]== ':'){
-			port_num=address[i+1:];
-			casted_port, err :=strconv.Atoi(port_num)
-			if(err!=nil){
+	for i := 0; i < len(address); i++ {
+		if address[i] == ':' {
+			port_num = address[i+1:]
+			casted_port, err := strconv.Atoi(port_num)
+			if err != nil {
 				fmt.Println("ERROR CASTING")
 			}
-			casted_port+=offset;
-			new_address:=address[:i+1]+strconv.Itoa(casted_port)
+			casted_port += offset
+			new_address := address[:i+1] + strconv.Itoa(casted_port)
 			//fmt.Println("NEW ADDRESS->",new_address)
 			return new_address
 		}
 	}
-	log.Println("[PARSE PORT ERROR]",address)
+	log.Println("[PARSE PORT ERROR]", address)
 	return address
 }
+
 // THREE WAY REPLICATION ----------------------------
 
 // sends the message informing the node about the change in the network structure
-func (this *raftnode)seekChangesToNetworkStructure() func(){
-	previousGmsString:=this.gmsPtr.GetAllNodes()
+// TODO: which node is the leader sending this to? I'm guessing it's sending it to all?
+// TODO: step 2
+/*	establish the network structure
+	- inside the callback,
+		- does something if it detects a difference
+*/
+func (this *raftnode) seekChangesToNetworkStructure() func() {
+	previousGmsString := this.gmsPtr.GetAllNodes()
+
+	/**	copy over over gms's membership & assign Raft's membership
+	- key is the ip
+	- value: "state" (joined, failed, commit)
+	*/
+	// TODO: if there's no nodes in the system tracked by raft, then it adds all nodes tracked by the gms
 	if len(this.netMap) == 0 {
-		for i:=0;i< len(previousGmsString);i++{
+		for i := 0; i < len(previousGmsString); i++ {
 			this.netMapMutex.Lock()
-			this.netMap[previousGmsString[i]]="JOINED"
+			this.netMap[previousGmsString[i]] = "JOINED"
 			this.netMapMutex.Unlock()
 		}
 	}
 
-
-	for i:=0;i< len(previousGmsString);i++{
+	for i := 0; i < len(previousGmsString); i++ {
 		if status, found := this.netMap[previousGmsString[i]]; found {
-			if(status=="JOINED"){
+			if status == "JOINED" { // if raft already knew about the node
+				this.netMapMutex.Lock()
 				this.procressJoin(previousGmsString[i])
+				this.netMapMutex.Unlock()
 			}
 		} else {
 			this.netMapMutex.Lock()
-			this.netMap[previousGmsString[i]]="JOINED"
+			this.netMap[previousGmsString[i]] = "JOINED" // if raft didn't know about the node
 			this.netMapMutex.Unlock()
 		}
 	}
@@ -504,8 +520,8 @@ func (this *raftnode)seekChangesToNetworkStructure() func(){
 	// it would mean that that node has failed
 	this.netMapMutex.Lock()
 	for ipAddr, _ := range this.netMap {
-		if(!stringInSlice(ipAddr,previousGmsString)){
-			//NCPrint.Println("<>FAILED",ipAddr)
+		if !stringInSlice(ipAddr, previousGmsString) {
+			// if there's a node in raft but not in gms, then processFailure
 			this.netMap[ipAddr] = "FAIL"
 			this.procressFail(ipAddr)
 		}
@@ -513,101 +529,130 @@ func (this *raftnode)seekChangesToNetworkStructure() func(){
 	this.netMapMutex.Unlock()
 
 	return func() {
-		currGmsString:=this.gmsPtr.GetAllNodes()
-		if(len(previousGmsString)!= len(currGmsString)) {
-			networkDifference:=difference(previousGmsString,currGmsString)
-			NCPrint.Println("NETCHANGE DETECTED ",networkDifference)
-			for i:=0;i< len(networkDifference);i++ {
+		currGmsString := this.gmsPtr.GetAllNodes()        // get gms membership
+		if len(previousGmsString) != len(currGmsString) { //
+			networkDifference := difference(previousGmsString, currGmsString) // returns a list of nodes that were in one but not the other
+			NCPrint.Println("NETCHANGE DETECTED ", networkDifference)
+			for i := 0; i < len(networkDifference); i++ {
+
 				if status, found := this.netMap[networkDifference[i]]; found {
-					if(status=="FAIL"){
-						NCPrint.Println("NODE RECOVERED",networkDifference[i])
+					if status == "FAIL" {
+						NCPrint.Println("NODE RECOVERED", networkDifference[i])
 						this.netMap[networkDifference[i]] = "JOINED"
+						this.netMapMutex.Lock()
 						this.procressJoin(networkDifference[i])
-					} else if(status=="JOINED") {
-						NCPrint.Println("UNJOINED NODE FAILED",networkDifference[i])
+						this.netMapMutex.Unlock()
+
+					} else if status == "JOINED" {
+						NCPrint.Println("UNJOINED NODE FAILED", networkDifference[i])
 						this.netMap[networkDifference[i]] = "FAIL"
 						this.procressFail(networkDifference[i])
-					} else if(status=="COMMIT") {
-						NCPrint.Println("NODE FAILED",networkDifference[i])
+
+					} else if status == "COMMIT" {
+						NCPrint.Println("NODE FAILED", networkDifference[i])
 						this.netMap[networkDifference[i]] = "FAIL"
 						this.procressFail(networkDifference[i])
 					}
 
-				} else {
-					NCPrint.Println("NEW NODE JOINED",networkDifference[i])
-					this.netMap[networkDifference[i]] = "JOINED"
+				} else { // if raft didn't know about the newly joined node from gms's snapshot diffrence, add it as joined
+					// TODO: this is when the leader received a join request from a newly joined node.
+					// TODO: where does it send a response back?
+					NCPrint.Println("NEW NODE JOINED", networkDifference[i])
+					this.netMap[networkDifference[i]] = "JOINED" // TODO: what is netMap and networkDifference?
 				}
 			}
-			previousGmsString=currGmsString
+			previousGmsString = currGmsString
+		}
+
+		for ipAddr, _ := range this.netMap {
+			if this.netMap[ipAddr] == "JOINED" {
+				LDprint.Println("LEADER SENDING JOIN REQ OF", ipAddr) // TODO: why is proces
+				this.netMapMutex.Lock()
+				this.procressJoin(ipAddr)
+				this.netMapMutex.Unlock()
+			}
 		}
 	}
 }
 
-func (this *raftnode) procressFail(string_ip string){
+func (this *raftnode) procressFail(failed_node_ip_addr string) {
 	//DUMMY
-	predecessor_ip:=this.replication.FindPredecessorNode(string_ip)
-	jointype:="FAIL"
-	FailOption:="PREDECESSOR"
+	successor_ip := this.replication.FindSuccessorNode(failed_node_ip_addr)
+	this_failed_node_ip_addr := failed_node_ip_addr
+	jointype := "FAIL"
+	FailOption := constants.Successor
 
-	fail_Payload_predecessor:=&protobuf.InternalMsg{
-		MessageID:                   nil,
-		Command:                     69,
-		JoinType:                    &jointype,
-		FailOption:                  &FailOption,
+	fail_Payload_predecessor := &protobuf.InternalMsg{
+		MessageID:  nil,
+		Command:    69,
+		JoinType:   &jointype,
+		FailOption: &FailOption,
+		FailIP:     &this_failed_node_ip_addr,
 	}
-	payload, err :=proto.Marshal(fail_Payload_predecessor)
-	if err != nil{
+	payload, err := proto.Marshal(fail_Payload_predecessor)
+	if err != nil {
 		log.Println("[PAYLOAD ERROR]")
 	}
 
-	NCPrint.Println("PREDECESSOR FAIL REQ",string_ip," TO ",predecessor_ip)
-	this.transportPtr.ReplicationRequest(payload,parsePort(predecessor_ip,1))// 1 offset for TCP PORT
+	NCPrint.Println("PREDECESSOR FAIL REQ", failed_node_ip_addr, " TO ", successor_ip)
+	this.transportPtr.ReplicationRequest(payload, parsePort(successor_ip, 1)) // 1 offset for TCP PORT
 
-	// now sending it to the grand predecessor GRAND_PREDECESSOR
-	grand_FailOption:="GRAND_PREDECESSOR"
-	grand_predecessor_ip:=this.replication.FindPredecessorNode(predecessor_ip)
+	// now sending it to the grand predecessor GRAND_GrandSuccessor
+	grand_FailOption := constants.GrandSuccessor
+	grand_successor_ip := this.replication.FindSuccessorNode(successor_ip)
 
-	fail_Payload_predecessor=&protobuf.InternalMsg{
-		MessageID:                   nil,
-		Command:                     69,
-		JoinType:                    &jointype,
-		FailOption:                  &grand_FailOption,
+	//fail_Payload_predecessor=&protobuf.InternalMsg{
+	//	MessageID:                   nil,
+	//	Command:                     69,
+	//	JoinType:                    &jointype,
+	//	FailOption:                  &grand_FailOption,
+	//	failIP:						&this_failed_node_ip_addr
+	//}
+	fail_Payload_predecessor = &protobuf.InternalMsg{
+		MessageID:  nil,
+		Command:    69,
+		JoinType:   &jointype,
+		FailOption: &grand_FailOption,
+		FailIP:     &this_failed_node_ip_addr,
 	}
-	payload, err =proto.Marshal(fail_Payload_predecessor)
-	if err != nil{
+	payload, err = proto.Marshal(fail_Payload_predecessor)
+	if err != nil {
 		log.Println("[PAYLOAD ERROR]")
 	}
 
-	NCPrint.Println("GRAND_PREDECESSOR FAIL REQ",string_ip," TO ",grand_predecessor_ip)
-	this.transportPtr.ReplicationRequest(payload,parsePort(grand_predecessor_ip,1))// 1 offset for TCP PORT
+	NCPrint.Println("GRAND_PREDECESSOR FAIL REQ", failed_node_ip_addr, " TO ", grand_successor_ip)
+	this.transportPtr.ReplicationRequest(payload, parsePort(grand_successor_ip, 1)) // 1 offset for TCP PORT
 
 }
 
-func (this *raftnode) procressJoin(string_ip string){
+/**	Assumes the lock to the "netMap" is acquired before calling this function.
+1. finds the successor node of the joined node using replication -> GMS
+2.	TODO: why don't we let everyone know that this new node joined rather than choosing the successor/grandsuccessor?
+*/
+func (this *raftnode) procressJoin(string_ip string) {
 	//DUMMY
-	destination:=this.replication.FindPredecessorNode(string_ip)
-	var jointype *string;
-	jointype=new(string)
-	*jointype="JOINED"
-	FailOption:="NULL"
+	destination := this.replication.FindSuccessorNode(string_ip)
+	var jointype *string
+	jointype = new(string)
+	*jointype = "JOINED"
+	FailOption := constants.Successor // TODO: what is a failed option?
 
-	joinPayload:=protobuf.InternalMsg{
-		MessageID:                   nil,
-		Command:                     69,
-		JoinType:                    jointype,
-		FailOption:                  &FailOption,
+	joinPayload := protobuf.InternalMsg{
+		MessageID:  nil,
+		Command:    69, // TODO: what is command 69? ->
+		JoinType:   jointype,
+		FailOption: &FailOption,
 	}
-	payload, err :=proto.Marshal(&joinPayload)
-	if err != nil{
+	payload, err := proto.Marshal(&joinPayload)
+	if err != nil {
 		log.Println("[PAYLOAD ERROR]")
 	}
 
-	NCPrint.Println("SENDING ",*joinPayload.JoinType," REQUEST OF",string_ip," TO ",destination)
-	this.transportPtr.ReplicationRequest(payload,parsePort(destination,1))// 1 offset for TCP PORT
-	this.netMapMutex.Lock()
-	this.netMap[string_ip]="COMMIT"
-	this.netMapMutex.Unlock()
+	NCPrint.Printf("[Raft debug] Sending join request from leader %s to follower %s about the new node %s \n", this.node_ip, destination, string_ip)
+	this.transportPtr.ReplicationRequest(payload, parsePort(destination, 1)) // 1 offset for TCP PORT
+	this.netMap[string_ip] = "COMMIT"
 }
+
 //https://stackoverflow.com/questions/19374219/how-to-find-the-difference-between-two-slices-of-strings
 func difference(slice1 []string, slice2 []string) []string {
 	var diff []string

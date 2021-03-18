@@ -57,6 +57,7 @@ message InternalMsg {
 
   // for the NETWORK JOIN REQUEST
   optional string joinType=11;//"JOINED","FAIL"
-  optional string failOption=12;//"PREDECESSOR", or "GRAND_PREDECESSOR"
+  optional string failOption=12;//"SUCCESSOR", or "GRAND_SUCCESSOR"
 
+  optional string failIP=13;
 }

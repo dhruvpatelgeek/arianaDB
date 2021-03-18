@@ -112,7 +112,7 @@ func TestRouting(t *testing.T) {
 				t.Error("[Incorrect initialization] - Expected: ", expected, ", but got: ", replicationService.getAllChains())
 			}
 
-			nextNode := replicationService.GetNextNode(key.key)
+			nextNode := replicationService.FindSuccessorNode(key.key)
 			if key.expected != nextNode {
 				t.Error("Expected: ", key.expected, ", but got: ", nextNode)
 			}

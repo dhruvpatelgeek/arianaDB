@@ -93,7 +93,7 @@ func New(tm *transport.TransportModule,
 	}
 	go sm.processStorageToStorageMessages()
 	go sm.processCoordinatorMessages()
-	//go sm.monitorKVStoreSize()
+	go sm.monitorKVStoreSize()
 
 	return &sm
 }
@@ -150,7 +150,8 @@ func (sm *StorageService) processCoordinatorMessages() {
 }
 
 /**
-MigratePartialTable is a thread-safe function which blocks the caller until the subset of the keys are migrated to the destination.
+MigratePartialTable is a thread-safe function which blocks the caller until the subset of the keys are migrated to the destination. The migrated
+subset of keys will be removed from the originating table.
 
 MigrateTable assumes the destination is valid and the destinationTable is valid.
 
@@ -199,6 +200,7 @@ func (sm *StorageService) MigratePartialTable(destination string,
 				if err != nil {
 					fmt.Println("[Storage] Failed to migrate key during partial table migration.", err.Error())
 				}
+				delete(kvStore, key)
 			}
 		case true:
 			// when wrapped around, the key is in new node's range if outside the range [upperbound:lowerbound] where upperbound < lowerbound
@@ -209,6 +211,7 @@ func (sm *StorageService) MigratePartialTable(destination string,
 				if err != nil {
 					fmt.Println("[Storage] Failed to migrate key during partial table migration.", err.Error())
 				}
+				delete(kvStore, key)
 			}
 		}
 	}
@@ -246,14 +249,12 @@ func (sm *StorageService) migrateKey(
 	if err != nil {
 		return err
 	}
-
-	delete(kvStore, key)
 	return nil
 }
 
 /**
 MigrateTable is a thread-safe function which blocks the caller until the destination table is wiped
-and the originating table is migrated to the destination table.
+and the originating table is migrated to the destination table. After migration, the originating table will be preserved.
 
 MigrateTable assumes the destination is valid and the destinationTable is valid.
 
@@ -264,7 +265,7 @@ MigrateTable will abort the table migration if:
 If a key fails to transfer to the destination table during table migration, it will be deleted from the local
 copy and continue migrating the remaining keys. This failure may result in loss of keys.
 */
-func (sm *StorageService) MigrateTable(destination string,
+func (sm *StorageService) MigrateEntireTable(destination string,
 	originatingTable constants.TableSelection,
 	destinationTable constants.TableSelection) error {
 
@@ -281,7 +282,6 @@ func (sm *StorageService) MigrateTable(destination string,
 		kvStoreLock.Unlock()
 		return errors.New("[Storage] Failed to wipeout destination table. Aborting table migration \n" + err.Error())
 	}
-
 	// migrate originating table to destination table
 	for key, value := range kvStore {
 		err := sm.migrateKey(kvStore, key, value, destination, destinationTable)
@@ -290,6 +290,8 @@ func (sm *StorageService) MigrateTable(destination string,
 		}
 	}
 	kvStoreLock.Unlock()
+
+	// TODO: it looks like we're not wiping out our own table after migration?
 
 	return nil
 }
@@ -320,6 +322,9 @@ func (sm *StorageService) MergeTables(
 	destinationKVStoreLock.Lock()
 	defer destinationKVStoreLock.Unlock()
 
+	fmt.Printf("[Storage] Merging table %d into %d.\n", sourceTable, destinationTable)
+
+	fmt.Printf("[Storage] KV Stores before merge (Head: %d, Middle: %d, Tail: %d)\n", len(sm.headKVStore), len(sm.middleKVStore), len(sm.tailKVStore))
 	// migrate originating table to destination table
 	for key, value := range sourceKVStore {
 		destinationKVStore[key] = value
@@ -329,6 +334,8 @@ func (sm *StorageService) MergeTables(
 	for k := range sourceKVStore {
 		delete(sourceKVStore, k)
 	}
+
+	fmt.Printf("[Storage] KV Stores after merge (Head: %d, Middle: %d, Tail: %d)\n", len(sm.headKVStore), len(sm.middleKVStore), len(sm.tailKVStore))
 
 	return nil
 }
@@ -464,19 +471,23 @@ func shutdown() {
 }
 
 func (sm *StorageService) wipeout(tableSelection constants.TableSelection) uint32 {
+
 	switch tableSelection {
 	case constants.Head:
 		sm.headKVStoreLock.Lock()
 		sm.headKVStore = make(map[string][]byte)
 		sm.headKVStoreLock.Unlock()
+
 	case constants.Middle:
 		sm.middleKVStoreLock.Lock()
 		sm.middleKVStore = make(map[string][]byte)
 		sm.middleKVStoreLock.Unlock()
+
 	case constants.Tail:
 		sm.tailKVStoreLock.Lock()
 		sm.tailKVStore = make(map[string][]byte)
 		sm.tailKVStoreLock.Unlock()
+
 	default:
 		fmt.Printf("[Storage] Received a wipeout command for a non-existing table (%d)\n.", tableSelection)
 	}

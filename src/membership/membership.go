@@ -26,7 +26,7 @@ const SendJoinCommand uint32 = 12
 const HeartbeatGossipCommand uint32 = 13
 
 // TimeHeartbeat is time period for Heartbeat
-const TimeHeartbeat = 100
+const TimeHeartbeat = 300
 
 // TimeFail is time period for failCheck Check
 const TimeFail = 5 * 1000
@@ -47,6 +47,9 @@ type MembershipService struct {
 	transport              *transport.TransportModule
 	receiveChannel         chan []byte
 	GMSEventMessageChannel chan structure.GMSEventMessage
+
+	// This should be recorded in case that the node "failed" to join a system.
+	initialMembers []string
 }
 
 // New creates a new instance of the GroupMembershipService which manages the set of members in the service.
@@ -96,10 +99,12 @@ func New(
 	gms.membersListLock.Unlock()
 	gms.GMSEventMessageChannel = GMSEventMessageChannel
 
+	gms.initialMembers = initialMembers
+
 	// begin a thread for listening to the receive channel and processing messages
 	go gms.listenToReceiveChannel()
 
-	gms.bootstrap(initialMembers)
+	gms.Bootstrap()
 
 	// spawn heartbeat threads
 	go gms.failCheck()
@@ -222,9 +227,9 @@ func (gms *MembershipService) processHeartbeat(request *protobuf.MembershipReq) 
 
 // Whenever a new node join the system, it should get membership lists from other members
 // it previously knowed.
-func (gms *MembershipService) bootstrap(initialMembers []string) {
-	fmt.Println("initial members list:", initialMembers)
-	for _, address := range initialMembers {
+func (gms *MembershipService) Bootstrap() {
+	fmt.Println("[GMS] Sending join requests to initial members: ", gms.initialMembers)
+	for _, address := range gms.initialMembers {
 		if address != gms.address {
 			joinRequest := &protobuf.MembershipReq{
 				SourceAddress:          gms.address,
@@ -232,16 +237,16 @@ func (gms *MembershipService) bootstrap(initialMembers []string) {
 				MembersList:            gms.GetAllNodes(),
 				JoinDestinationAddress: &address,
 			}
-// <<<<<<< HEAD
+			// <<<<<<< HEAD
 
-// 			marshalledJoinRequest, err := proto.Marshal(joinRequest)
-// 			if err == nil {
-// 				gms.transport.SendHeartbeat(marshalledJoinRequest, structure.GenerateMessageID(), address)
-// 			} else {
-// =======
+			// 			marshalledJoinRequest, err := proto.Marshal(joinRequest)
+			// 			if err == nil {
+			// 				gms.transport.SendHeartbeat(marshalledJoinRequest, structure.GenerateMessageID(), address)
+			// 			} else {
+			// =======
 			err := gms.transport.SendHeartbeat(joinRequest, address)
 			if err != nil {
-// >>>>>>> main
+				// >>>>>>> main
 				fmt.Println(err)
 			}
 		}
@@ -257,6 +262,16 @@ func (gms *MembershipService) listenToReceiveChannel() {
 		}
 	}
 }
+
+// func (gms *MembershipService) AddNewMember(newNode string){
+// 	gms.membersListLock.Lock()
+
+// 	gms.members[newNode] = createNewMembersListValue()
+
+// 	gms.members[newNode].heartbeatTimestamp = getCurrentTimeInMilliSec()
+// 	gms.members[newNode].isAlive = true
+// 	gms.membersListLock.Unlock()
+// }
 
 // Whenever received a message from channel, this function tries to classify what kind of
 // message it is and use different functions to handle different kinds of message.
@@ -283,6 +298,12 @@ func (gms *MembershipService) processMessage(msgReceived []byte) {
 	default:
 		fmt.Errorf("[ERROR] Undefined command received in Group Membership Service")
 	}
+}
+
+func (gms *MembershipService) DeleteItem(ipAddr string) {
+	gms.membersListLock.Lock()
+	delete(gms.members, ipAddr)
+	gms.membersListLock.Unlock()
 }
 
 // When a new node sends join request to whoever nodes it knows, that know will
@@ -315,11 +336,11 @@ func (gms *MembershipService) processSendJoinRequest(request *protobuf.Membershi
 		fmt.Errorf("", err)
 	}
 
-// <<<<<<< HEAD
-// 	gms.transport.SendHeartbeat(payload, structure.GenerateMessageID(), destination)
+	// <<<<<<< HEAD
+	// 	gms.transport.SendHeartbeat(payload, structure.GenerateMessageID(), destination)
 
-// =======
-// >>>>>>> main
+	// =======
+	// >>>>>>> main
 	msg := structure.GMSEventMessage{
 		IsJoined: true,
 		Node:     destination,
@@ -337,14 +358,14 @@ func (gms *MembershipService) sendList(destination string) {
 		MembersList:   gms.GetAllNodes(),
 	}
 
-// <<<<<<< HEAD
-// 	gms.transport.SendHeartbeat(payload, structure.GenerateMessageID(), destination)
-// =======
+	// <<<<<<< HEAD
+	// 	gms.transport.SendHeartbeat(payload, structure.GenerateMessageID(), destination)
+	// =======
 	err := gms.transport.SendHeartbeat(membershipRequest, destination)
 	if err != nil {
 		fmt.Errorf("", err)
 	}
-// >>>>>>> main
+	// >>>>>>> main
 }
 
 //GetAllNodes () return all membership lists as an array of string

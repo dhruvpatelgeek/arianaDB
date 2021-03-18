@@ -1,7 +1,6 @@
 package transport
 
 import (
-	guuid "github.com/google/uuid"
 	"dht/google_protocol_buffer/pb/protobuf"
 	"dht/src/constants"
 	"errors"
@@ -14,6 +13,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	guuid "github.com/google/uuid"
 
 	"github.com/golang/protobuf/proto"
 	"github.com/google/uuid"
@@ -550,12 +551,12 @@ func (tm *TransportModule) SendStorageToStorage(storageMessage *protobuf.Interna
 	destinationIPv4 := destinationAddress + ":" + destinationStorageToStoragePort
 
 	s2sConnection, err := net.Dial("tcp", destinationIPv4)
-	defer s2sConnection.Close()
 	if err != nil {
 		fmt.Println("FAILED TO DIAL TCP")
 		fmt.Println(err)
 		return errors.New("Unable to open a S2S TCP connection to " + destinationIPv4)
 	}
+	defer s2sConnection.Close()
 
 	// send data
 	_, err = s2sConnection.Write(serializedMessage)
@@ -594,7 +595,8 @@ func (tm *TransportModule) processStorageToStorageMessages() {
 			log.Println("[Transport] Unable to marshal a storage-to-storage request. Ignoring this message")
 			continue
 		}
-		if(internalMessage.Command==69){
+		
+		if(internalMessage.Command >= 69){
 
 			//uncomment to see the message type
 
@@ -606,7 +608,7 @@ func (tm *TransportModule) processStorageToStorageMessages() {
 
 			// TODO:[DELETE]procress the request.....
 			tm.coodinatorChan<-*internalMessage
-		} else {
+		}else {
 			tm.storageChannel <- *internalMessage
 		}
 
@@ -703,6 +705,7 @@ func (tm *TransportModule) ReplicationRequest(payload []byte, destAddr string) {
 	}
 	timeoutDuration := SERVER_TO_SERVER_TIMEOUT
 	conn, err := net.Dial("tcp4", destAddr)
+
 	if(err!=nil){
 		log.Println("[TCP ReplicationRequest ERR]",err)
 		return

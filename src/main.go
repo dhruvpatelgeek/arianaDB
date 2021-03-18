@@ -69,7 +69,6 @@ func main() {
 
 	// initialize coordinator service
 	_, err = coordinator.New(
-		gmsToCoordinatorChannel,
 		transportToCoordinatorChannel,
 		coordinatorToStorageChannel,
 		coordinatorToReplicationChannel,
@@ -81,7 +80,8 @@ func main() {
 		storageService,
 
 		containerHostname,
-		port)
+		port,
+		gms)
 	if err != nil {
 		log.Fatal("Failed to initialize CoordinatorService", err)
 		panic("Error when creating coordinator. Abort node initialization")

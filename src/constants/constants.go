@@ -9,6 +9,8 @@ const (
 
 	// don't know if we need this:
 	ProcessKeyMigrationRequest
+
+	ProcessHeadTableMigrationRequest
 )
 
 type TableSelection uint32
@@ -17,4 +19,9 @@ const (
 	Head TableSelection = iota + 1 // if this is a client request sent directly
 	Middle
 	Tail
+)
+
+const (
+	Successor      = "SUCESSOR"
+	GrandSuccessor = "GRAND_SUCCESS"
 )
