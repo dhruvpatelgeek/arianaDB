@@ -21,6 +21,16 @@ import (
 	"google.golang.org/protobuf/proto"
 )
 
+// Storage Command numbers
+const PUT = 1
+const GET = 2
+const REMOVE = 3
+const SHUTDOWN = 4
+const WIPEOUT = 5
+const IS_ALIVE = 6
+const GET_PID = 7
+const GET_MC = 8
+
 /** TODO: refactor storage and coordinator so that:
 1. storage is exclusively for committing to KVStore & responding to client
 2. coordinator makes the decision to route to different nodes.
@@ -194,14 +204,27 @@ func (coordinator *CoordinatorService) processClientRequest(incomingMessage prot
 	destinationTable := uint32(constants.Head)
 	respondToClient := false
 
+	storageCommand := kvRequest.GetCommand()
 	if selfIP := coordinator.hostIPv4; destinationAddress == selfIP {
+		if storageCommand == GET {
+			sendGetResponseToClient := true
+			incomingMessage.RespondToClient = &sendGetResponseToClient
+			coordinator.toStorageChannel <- incomingMessage
+			return
+		}
+
 		coordinator.toStorageChannel <- incomingMessage
 		destinationAddress = coordinator.replicationService.FindSuccessorNode(selfIP)
 		destinationTable = uint32(constants.Middle)
 	}
 
-	if kvRequest.GetCommand() == 4 {
+	// Don't propagate shutdowns
+	if storageCommand == SHUTDOWN {
 		return
+	}
+
+	if destinationTable == uint32(constants.Head) && storageCommand == GET {
+		respondToClient = true
 	}
 
 	outgoingMessage := incomingMessage
@@ -215,23 +238,26 @@ func (coordinator *CoordinatorService) processClientRequest(incomingMessage prot
 func (coordinator *CoordinatorService) processPropagatedRequest(incomingMessage protobuf.InternalMsg, kvRequest *protobuf.KVRequest) {
 	coordinator.toStorageChannel <- incomingMessage
 
-	currTable := incomingMessage.GetDestinationNodeTable()
-	if constants.TableSelection(currTable) != constants.Tail {
-		destinationAddress := coordinator.replicationService.FindSuccessorNode(coordinator.hostIPv4)
-		destinationTable := uint32(constants.TableSelection(incomingMessage.GetDestinationNodeTable() + 1))
-		respondToClient := false
+	if kvRequest.GetCommand() != GET {
+		currTable := incomingMessage.GetDestinationNodeTable()
+		if constants.TableSelection(currTable) != constants.Tail {
+			destinationAddress := coordinator.replicationService.FindSuccessorNode(coordinator.hostIPv4)
+			destinationTable := uint32(constants.TableSelection(incomingMessage.GetDestinationNodeTable() + 1))
+			respondToClient := false
 
-		if destinationTable == uint32(constants.Tail) {
-			respondToClient = true
+			if destinationTable == uint32(constants.Tail) {
+				respondToClient = true
+			}
+
+			outgoingMessage := incomingMessage
+			outgoingMessage.Command = uint32(constants.ProcessPropagatedKVRequest)
+			outgoingMessage.DestinationNodeTable = &destinationTable
+			outgoingMessage.RespondToClient = &respondToClient
+
+			coordinator.propagateRequest(outgoingMessage, destinationAddress)
 		}
-
-		outgoingMessage := incomingMessage
-		outgoingMessage.Command = uint32(constants.ProcessPropagatedKVRequest)
-		outgoingMessage.DestinationNodeTable = &destinationTable
-		outgoingMessage.RespondToClient = &respondToClient
-
-		coordinator.propagateRequest(outgoingMessage, destinationAddress)
 	}
+
 }
 
 func (coordinator *CoordinatorService) propagateRequest(outgoingMessage protobuf.InternalMsg, destinationAddress string) {
