@@ -4,6 +4,7 @@ import (
 
 	//"log"
 	//"fmt"
+
 	"dht/src/membership"
 	"dht/src/structure"
 	"math/big"
@@ -18,10 +19,12 @@ type ReplicationService struct {
 	hostPort string
 	hostIPv4 string
 
-	gms *membership.MembershipService
+	gms             *membership.MembershipService
+	gmsEventChannel chan membership.GMSEventMessage
 }
 
-func New(hostIP string, hostPort string, gms *membership.MembershipService) *ReplicationService {
+func New(hostIP string, hostPort string,
+	gms *membership.MembershipService) *ReplicationService {
 	rs := &ReplicationService{}
 
 	rs.hostIP = hostIP
@@ -45,31 +48,25 @@ func (rs *ReplicationService) GetMigrationRange(ipv4 string) (string, string) {
 	return migrationStart.String(), nodeHashInt.String()
 }
 
+// return true if the giving ipv4 is the predecessor of the current node at the current state
 func (rs *ReplicationService) IsPredecessor(ipv4 string) bool {
 
 	predecessor := rs.findPredecessorFromHash(structure.HashKey(rs.hostIPv4))
 	return ipv4 == predecessor
 }
 
+/** FindPredecessorNode(ipv4 string) returns the predecessor of the reference node???
+ */
 func (rs *ReplicationService) FindPredecessorNode(ipv4 string) string {
 	return rs.findPredecessorFromHash(structure.HashKey(ipv4))
 }
 
 func (rs *ReplicationService) findPredecessorFromHash(hash *big.Int) string {
 	nodeList := rs.gms.GetAllNodes()
-	//fmt.Println("[NODE LINST>>]",nodeList)
-	//fmt.Println("[HASH]",hash.String())
-	var responsibleNode string
-	// diff := hashDifference(structure.HashKey(responsibleNode), hash)
 
-	diff := big.NewInt(0)
-	maxSlice := make([]byte, 256)
-	// Initialize with largest byte value
-	for el := range maxSlice {
-		maxSlice[el] = 15
-	}
-
-	diff.SetBytes(maxSlice)
+	responsibleNode := nodeList[0]
+	increment := big.NewInt(1)
+	diff := hashDifference(increment.Add(hash, increment), structure.HashKey(responsibleNode))
 
 	// Find node responsible for given key
 	for _, currNode := range nodeList {
@@ -117,6 +114,24 @@ func (rs *ReplicationService) findSuccessorNodeFromHash(hash *big.Int) string {
 	return responsibleNode
 }
 
+// TODO:
+func (rs *ReplicationService) GetNumFailedNodesBetweenSelfAndNextAlivePredecessor(failedNodes []string) int {
+	numOfFailNodesInBetween := 0
+
+	predecessor := rs.FindPredecessorNode(rs.hostIPv4)
+	if predecessor == rs.hostIPv4 {
+		return len(failedNodes)
+	}
+
+	for _, failedNode := range failedNodes {
+		if predecessor == rs.FindPredecessorNode(failedNode) {
+			numOfFailNodesInBetween += 1
+		}
+	}
+
+	return numOfFailNodesInBetween
+}
+
 // @Description: Computes the numerical difference between
 // the key's hash and the node's hash
 // @param key
@@ -143,5 +158,3 @@ func hashDifference(key *big.Int, node *big.Int) *big.Int {
 		return diff.Add(diff.Sub(max, key), node)
 	}
 }
-
-

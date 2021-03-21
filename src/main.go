@@ -5,10 +5,8 @@ import (
 	"dht/google_protocol_buffer/pb/protobuf"
 	"dht/src/coordinator"
 	"dht/src/membership"
-	"dht/src/raft"
 	"dht/src/replication"
 	"dht/src/storage"
-	"dht/src/structure"
 	"dht/src/transport"
 	"errors"
 	"fmt"
@@ -32,13 +30,11 @@ func main() {
 	gmsChannel := make(chan []byte, 2)
 
 	// construct channels for intra-node service communication
-	gmsToCoordinatorChannel := make(chan structure.GMSEventMessage, 20)
-	transportToCoordinatorChannel := make(chan protobuf.InternalMsg, 20)
-	transportToStorageChannel := make(chan protobuf.InternalMsg, 20)
-	coordinatorToStorageChannel := make(chan protobuf.InternalMsg, 20)
-	coordinatorToReplicationChannel := make(chan structure.GMSEventMessage, 20)
+	gmsToCoordinatorChannel := make(chan membership.GMSEventMessage, 10000)
+	transportToCoordinatorChannel := make(chan protobuf.InternalMsg, 10000)
+	transportToStorageChannel := make(chan protobuf.InternalMsg, 10000)
+	coordinatorToStorageChannel := make(chan protobuf.InternalMsg, 10000)
 	transportToCoordinatorChannel_RAFT := make(chan protobuf.RaftPayload)
-	coordinatorToRaftChannel := make(chan protobuf.RaftPayload)
 	// get info about self
 	containerHostname := getOutboundIP().String()
 
@@ -58,22 +54,16 @@ func main() {
 	}
 
 	// initialize storage service
-	storageService := storage.New(transportService, gms, coordinatorToStorageChannel, transportToStorageChannel)
+	storageService := storage.New(containerHostname, port, transportService, gms, coordinatorToStorageChannel, transportToStorageChannel)
 
 	// initialize replicationService
 	replicationService := replication.New(containerHostname, port, gms)
 
-	//initialize the raft service
-	raft.New(gms,transportService,replicationService,containerHostname,portInt,coordinatorToRaftChannel)
-
-
 	// initialize coordinator service
 	_, err = coordinator.New(
+		gmsToCoordinatorChannel,
 		transportToCoordinatorChannel,
 		coordinatorToStorageChannel,
-		coordinatorToReplicationChannel,
-		coordinatorToRaftChannel,
-		transportToCoordinatorChannel_RAFT,
 
 		transportService,
 		replicationService,

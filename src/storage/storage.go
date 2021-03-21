@@ -50,6 +50,7 @@ const INV_KEY = 6
 const INV_VAL = 7
 
 type StorageService struct {
+	hostIpv4 string
 	// replicated kv stores
 	headKVStore     map[string][]byte
 	headKVStoreLock *sync.Mutex
@@ -69,13 +70,17 @@ type StorageService struct {
 	transportToStorageChannel   chan protobuf.InternalMsg
 }
 
-func New(tm *transport.TransportModule,
+func New(
+	hostname string,
+	hostport string,
+	tm *transport.TransportModule,
 	gms *membership.MembershipService,
 
 	coordinatorToStorageChannel chan protobuf.InternalMsg,
 	transportToStorageChannel chan protobuf.InternalMsg) *StorageService {
 
 	sm := StorageService{
+		hostIpv4:        hostname + ":" + hostport,
 		headKVStore:     make(map[string][]byte),
 		headKVStoreLock: &sync.Mutex{},
 
@@ -93,7 +98,7 @@ func New(tm *transport.TransportModule,
 	}
 	go sm.processStorageToStorageMessages()
 	go sm.processCoordinatorMessages()
-	go sm.monitorKVStoreSize()
+	// go sm.monitorKVStoreSize()
 
 	return &sm
 }
@@ -127,14 +132,21 @@ func (sm *StorageService) processStorageToStorageMessages() {
 			// TODO: Should follow the same pattern using processClientKVRequest & processPropagatedKVRequest
 			switch kvCommand := kvRequest.GetCommand(); kvCommand {
 			case PUT:
-				_ = sm.put(kvStore, kvStoreLock, kvRequest.GetKey(), kvRequest.GetValue(), kvRequest.GetVersion())
+				_ = sm.put(kvStore, kvStoreLock, kvRequest.GetKey(), kvRequest.GetValue())
 			case WIPEOUT:
+				fmt.Printf("[Storage] Received wipeout command from (TODO) to wipe my table :%d\n", tableSelection)
 				_ = sm.wipeout(tableSelection)
 			default:
 				fmt.Printf("[Storage] Storage-to-Storage channel received an unsupported KVRequest command (%d).\n", kvCommand)
 			}
 		default:
 			fmt.Printf("[Storage] Storage-to-Storage received an unsupported InternalMsg command (%d). Only supports (%d) command.\n", internalMsgCommand, constants.ProcessStorageToStorageKVRequest)
+			fmt.Printf("Supported commands are ProcessClientKVRequest (%d)\n", constants.ProcessClientKVRequest)
+			fmt.Printf("Supported commands are ProcessPropagatedKVRequest (%d)\n", constants.ProcessPropagatedKVRequest)
+			fmt.Printf("Supported commands are ProcessStorageToStorageKVRequest (%d)\n", constants.ProcessStorageToStorageKVRequest)
+			fmt.Printf("Supported commands are SplitTableRequest (%d)\n", constants.SplitTableRequest)
+			fmt.Printf("Supported commands are ProcessHeadTableMigrationRequest (%d)\n", constants.ProcessHeadTableMigrationRequest)
+			fmt.Printf("Supported commands are ProcessMigratingHeadTableRequest (%d)\n", constants.ProcessMigratingHeadTableRequest)
 		}
 	}
 }
@@ -149,7 +161,7 @@ func (sm *StorageService) processCoordinatorMessages() {
 	}
 }
 
-/**
+/*
 MigratePartialTable is a thread-safe function which blocks the caller until the subset of the keys are migrated to the destination. The migrated
 subset of keys will be removed from the originating table.
 
@@ -245,14 +257,23 @@ func (sm *StorageService) migrateKey(
 		return err
 	}
 
-	err = sm.tm.SendStorageToStorage(internalMessage, destination)
-	if err != nil {
-		return err
+	if destination == sm.hostIpv4 {
+		kvStore, kvsLock, err := sm.getKVStore(destinationTable)
+		if err != nil {
+			fmt.Printf("[Storage] Failed to process local migration. Caused by: %s\n", err)
+		}
+		sm.put(kvStore, kvsLock, []byte(key), value)
+	} else {
+		err = sm.tm.SendStorageToStorage(internalMessage, destination)
+		if err != nil {
+			fmt.Println("[Storage] Failed to migrate key remotely due to ", err.Error())
+			return err
+		}
 	}
 	return nil
 }
 
-/**
+/*
 MigrateTable is a thread-safe function which blocks the caller until the destination table is wiped
 and the originating table is migrated to the destination table. After migration, the originating table will be preserved.
 
@@ -276,20 +297,19 @@ func (sm *StorageService) MigrateEntireTable(destination string,
 	}
 
 	// wipeout destination table
-	kvStoreLock.Lock()
 	err = sm.wipeoutDestinationTable(destination, destinationTable)
 	if err != nil {
-		kvStoreLock.Unlock()
-		return errors.New("[Storage] Failed to wipeout destination table. Aborting table migration \n" + err.Error())
+		return fmt.Errorf("[Storage] Failed to wipeout destination (%s) table (%d). \n Caused by: %s. \nAbsorting table migration.\n", destination, destinationTable, err.Error())
 	}
 	// migrate originating table to destination table
 	for key, value := range kvStore {
+		kvStoreLock.Lock()
 		err := sm.migrateKey(kvStore, key, value, destination, destinationTable)
+		kvStoreLock.Unlock()
 		if err != nil {
 			fmt.Println("[Storage] Failed to migrate key during table migration. ", err.Error())
 		}
 	}
-	kvStoreLock.Unlock()
 
 	// TODO: it looks like we're not wiping out our own table after migration?
 
@@ -331,6 +351,7 @@ func (sm *StorageService) MergeTables(
 	}
 
 	// clear source table for ease of debugging
+	// TODO: should I not delete?
 	for k := range sourceKVStore {
 		delete(sourceKVStore, k)
 	}
@@ -346,9 +367,18 @@ func (sm *StorageService) wipeoutDestinationTable(destination string, destinatio
 		return err
 	}
 
-	err = sm.tm.SendStorageToStorage(internalMessage, destination)
-	if err != nil {
-		return err
+	if destination == sm.hostIpv4 {
+		_, _, err := sm.getKVStore(destinationTable)
+		if err != nil {
+			fmt.Printf("[Storage] Failed to process local migration. Caused by: %s\n", err)
+		}
+		sm.wipeout(destinationTable)
+	} else {
+		err = sm.tm.SendStorageToStorage(internalMessage, destination)
+		if err != nil {
+			fmt.Println("[Storage] Failed to wipeout destination table due to ", err.Error())
+			return err
+		}
 	}
 	return nil
 }
@@ -378,7 +408,7 @@ func (sm *StorageService) processKVRequest(request *protobuf.InternalMsg) error 
 	if getCurrMem() < MEM_LIM_MB {
 		switch cast_req.GetCommand() {
 		case PUT:
-			errCode = sm.put(kvStore, kvStoreLock, cast_req.GetKey(), cast_req.GetValue(), cast_req.GetVersion())
+			errCode = sm.put(kvStore, kvStoreLock, cast_req.GetKey(), cast_req.GetValue())
 		case GET:
 			value, errCode = sm.get(kvStore, kvStoreLock, cast_req.Key)
 		case REMOVE:
@@ -420,7 +450,7 @@ func (sm *StorageService) processKVRequest(request *protobuf.InternalMsg) error 
 	return nil
 }
 
-func (sm *StorageService) put(kvStore map[string][]byte, kvStoreLock *sync.Mutex, key []byte, value []byte, version int32) uint32 {
+func (sm *StorageService) put(kvStore map[string][]byte, kvStoreLock *sync.Mutex, key []byte, value []byte) uint32 {
 	if int(len(value)) > 10000 {
 		return INV_VAL
 	}
@@ -444,6 +474,7 @@ func (sm *StorageService) get(kvStore map[string][]byte, kvStoreLock *sync.Mutex
 	kvStoreLock.Unlock()
 
 	if !found {
+		log.Printf("[Storage] [Debug] Could not find key.\n")
 		return nil, NO_KEY
 	}
 
@@ -525,7 +556,7 @@ func getCurrMem() uint64 {
 func (sm *StorageService) monitorKVStoreSize() {
 	for {
 		time.Sleep(5 * time.Second)
-		fmt.Printf("[Storage] Number of keys in KVStores (Head: %d, Middle: %d, Tail: %d)\n",
+		fmt.Printf("[Storage] KVStores (Head: %d, Middle: %d, Tail: %d)\n",
 			len(sm.headKVStore), len(sm.middleKVStore), len(sm.tailKVStore))
 	}
 }

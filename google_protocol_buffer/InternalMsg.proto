@@ -55,9 +55,6 @@ message InternalMsg {
   optional string migrationDestinationAddress = 9;
   optional uint32 destinationNodeTable = 10;
 
-  // for the NETWORK JOIN REQUEST
-  optional string joinType=11;//"JOINED","FAIL"
-  optional string failOption=12;//"SUCCESSOR", or "GRAND_SUCCESSOR"
-
-  optional string failIP=13;
+  optional string replicateMiddleTableDestination = 11;
+  optional string replicateTailTableDestination = 12;
 }

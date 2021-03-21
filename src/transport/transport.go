@@ -56,12 +56,12 @@ type Message struct {
 type TransportModule struct {
 	connection                 *net.UDPConn
 	storageToStorageConnection *net.TCPListener
-	R2Rconnection   		    *net.UDPConn
+	R2Rconnection              *net.UDPConn
 
 	heartbeatChanel chan []byte
 	coodinatorChan  chan protobuf.InternalMsg
 	storageChannel  chan protobuf.InternalMsg
-	raftChan chan protobuf.RaftPayload
+	raftChan        chan protobuf.RaftPayload
 
 	hostIP               string
 	clientToServerPort   string
@@ -70,7 +70,7 @@ type TransportModule struct {
 }
 
 // initilaizes the transport layer
-func New(ip string, clientToServerPort int, gmsChan chan []byte, coordinatorChannel chan protobuf.InternalMsg, storageChannel chan protobuf.InternalMsg,raftChan chan protobuf.RaftPayload) (*TransportModule, error) {
+func New(ip string, clientToServerPort int, gmsChan chan []byte, coordinatorChannel chan protobuf.InternalMsg, storageChannel chan protobuf.InternalMsg, raftChan chan protobuf.RaftPayload) (*TransportModule, error) {
 	tm := &TransportModule{}
 	if !validPort(clientToServerPort) {
 		return tm, nil
@@ -81,14 +81,14 @@ func New(ip string, clientToServerPort int, gmsChan chan []byte, coordinatorChan
 	tm.storageToStoragePort = strconv.Itoa(clientToServerPort + 1)
 	tm.hostIPv4 = ip + ":" + tm.storageToStoragePort
 	R2R_PORT := clientToServerPort + 2
-	r2rconn:=createUDPConnection(ip,R2R_PORT)
+	r2rconn := createUDPConnection(ip, R2R_PORT)
 	tm.connection = createUDPConnection(ip, clientToServerPort)
 	tm.storageToStorageConnection = createTCPConnection(ip, tm.storageToStoragePort) // TODO: wtf is this?
-	tm.R2Rconnection=r2rconn
+	tm.R2Rconnection = r2rconn
 	tm.coodinatorChan = coordinatorChannel
 	tm.heartbeatChanel = gmsChan
 	tm.storageChannel = storageChannel
-	tm.raftChan=raftChan
+	tm.raftChan = raftChan
 	go tm.bootstrap()
 
 	// TODO: listen to TCP
@@ -410,10 +410,10 @@ func (tm *TransportModule) clientReq(payload []byte, messageID []byte, clientAdd
 		destinationTable := uint32(constants.Head)
 
 		internal_message_obj := protobuf.InternalMsg{
-			ClientAddress: &clientAddr,
-			KVRequest:     payload,
-			MessageID:     messageID,
-			Command:       uint32(constants.ProcessClientKVRequest), // TODO: unable
+			ClientAddress:        &clientAddr,
+			KVRequest:            payload,
+			MessageID:            messageID,
+			Command:              uint32(constants.ProcessClientKVRequest), // TODO: unable
 			DestinationNodeTable: &destinationTable,
 		}
 
@@ -509,20 +509,18 @@ func (tm *TransportModule) SendHeartbeat(heartbeat *protobuf.MembershipReq, dest
 	// TODO: marshal membership request
 	serializedHeartbeat, err := proto.Marshal(heartbeat)
 	if err != nil {
-		fmt.Errorf("[Transport] Failed to marshal hearbeat message")
 		return err
 	}
 	messageID := []byte("gossip" + uuid.New().String())
 
 	message, err := generateShell(serializedHeartbeat, messageID)
 	if err != nil {
-		fmt.Println("payload gen failed")
 		return err
 	}
 
 	addr, err := net.ResolveUDPAddr("udp", destAddr)
 	if err != nil {
-		log.Println("Address error ", err)
+		return err
 	}
 
 	tm.connection.WriteToUDP(message, addr)
@@ -556,7 +554,7 @@ func (tm *TransportModule) SendStorageToStorage(storageMessage *protobuf.Interna
 		fmt.Println(err)
 		return errors.New("Unable to open a S2S TCP connection to " + destinationIPv4)
 	}
-	defer s2sConnection.Close()
+	defer s2sConnection.Close() // TODO: maybe this is the error? someone forgot to close their connection? I think we also ran into this issue when we tried dialing too many?
 
 	// send data
 	_, err = s2sConnection.Write(serializedMessage)
@@ -595,20 +593,10 @@ func (tm *TransportModule) processStorageToStorageMessages() {
 			log.Println("[Transport] Unable to marshal a storage-to-storage request. Ignoring this message")
 			continue
 		}
-		
-		if(internalMessage.Command >= 69){
 
-			//uncomment to see the message type
-
-			//if(*internalMessage.JoinType=="FAIL"){
-			//	fmt.Println("[RECIVED REQUEST]  AS ",*internalMessage.FailOption,"OF A FAILURE")
-			//} else {
-			//	fmt.Println("[RECIVED REQUEST] AS ",*internalMessage.JoinType)
-			//}
-
-			// TODO:[DELETE]procress the request.....
-			tm.coodinatorChan<-*internalMessage
-		}else {
+		if internalMessage.Command == uint32(constants.ProcessMigratingHeadTableRequest) {
+			tm.coodinatorChan <- *internalMessage
+		} else {
 			tm.storageChannel <- *internalMessage
 		}
 
@@ -648,36 +636,36 @@ func (tm *TransportModule) R2R_daemon() {
 		for err != nil {
 			fmt.Println("listener failed - ", err)
 		}
-		casted_R2R:=&protobuf.RaftShell{
+		casted_R2R := &protobuf.RaftShell{
 			Message_ID: nil,
 			Checksum:   nil,
 			Payload:    nil,
 			Type:       "",
 		}
 		err = proto.Unmarshal(buffer[:n], casted_R2R)
-		if(err!=nil){
-			fmt.Println("[R2R CASITNG ERROR shell]",err,buffer[:n])
+		if err != nil {
+			fmt.Println("[R2R CASITNG ERROR shell]", err, buffer[:n])
 		}
 
-		if string(casted_R2R.Checksum)!= strconv.FormatUint(calculate_checksum(casted_R2R.Message_ID, casted_R2R.Payload), 10) {
+		if string(casted_R2R.Checksum) != strconv.FormatUint(calculate_checksum(casted_R2R.Message_ID, casted_R2R.Payload), 10) {
 			fmt.Println("[CHECKSUM ERR R2R]")
 		} else {
-			raftPayload:=&protobuf.RaftPayload{}
+			raftPayload := &protobuf.RaftPayload{}
 			err = proto.Unmarshal(casted_R2R.Payload, raftPayload)
-			if(err!=nil){
+			if err != nil {
 				fmt.Println("[R2R CASITNG ERROR payload]")
 			}
-			tm.raftChan<-*raftPayload
+			tm.raftChan <- *raftPayload
 		}
 	}
 
 }
 
-func (tm *TransportModule) R2RSend(payload []byte,destAddr string){
+func (tm *TransportModule) R2RSend(payload []byte, destAddr string) {
 	id := guuid.New()
-	messageID:=[]byte(id.String())
+	messageID := []byte(id.String())
 
-	send_payload:=&protobuf.RaftShell{
+	send_payload := &protobuf.RaftShell{
 		Message_ID: messageID,
 		Checksum:   []byte(strconv.FormatUint(calculate_checksum(messageID, payload), 10)),
 		Payload:    payload,
@@ -690,35 +678,48 @@ func (tm *TransportModule) R2RSend(payload []byte,destAddr string){
 	if err != nil {
 		log.Println("Address error ", err)
 	}
-	marshalled_send_payload,err:=proto.Marshal(send_payload)
-	if(err!=nil){
+	marshalled_send_payload, err := proto.Marshal(send_payload)
+	if err != nil {
 		fmt.Println("[CRITICAL] Casting error R2RSend")
 	}
-	tm.connection.WriteToUDP(marshalled_send_payload,addr )
+	tm.connection.WriteToUDP(marshalled_send_payload, addr)
 }
+
 //three way replication-------------------------------------------------------------
 
 //USED BY RAFT TO COMMUNICATE WITH THE COORDINATOR
-func (tm *TransportModule) ReplicationRequest(payload []byte, destAddr string) {
-	if debug {
-		fmt.Println("REQ >", destAddr)
-	}
-	timeoutDuration := SERVER_TO_SERVER_TIMEOUT
-	conn, err := net.Dial("tcp4", destAddr)
+func (tm *TransportModule) ReplicationRequest(payload []byte, destAddr string) error {
 
-	if(err!=nil){
-		log.Println("[TCP ReplicationRequest ERR]",err)
-		return
+	// obtain the remote's S2S TCP port
+	splitDestinationAddress := strings.Split(destAddr, ":")
+	if len(splitDestinationAddress) != 2 {
+		fmt.Println("[Transport] Error - destAddr ", destAddr)
+		return errors.New("[TCP] destination address (" + destAddr + ") did not contain IP:PORT ")
+	}
+	destinationAddress := splitDestinationAddress[0]
+	destinationClientPort, err := strconv.Atoi(splitDestinationAddress[1])
+	if err != nil {
+		return err
+	}
+	destinationStorageToStoragePort := strconv.Itoa(destinationClientPort + 1) // TODO: create a function for this to remove duplicated magic constants
+	destinationIPv4 := destinationAddress + ":" + destinationStorageToStoragePort
+
+	timeoutDuration := SERVER_TO_SERVER_TIMEOUT
+	conn, err := net.Dial("tcp4", destinationIPv4)
+	if err != nil {
+		log.Println("[TCP ReplicationRequest ERR]", err)
+		return fmt.Errorf("[Transport] [Error] Failed to connect to tcp address: %s. Caused by %s.\n", destinationIPv4, err.Error())
 	}
 	defer conn.Close() // close this object after doing this call
 
 	err = conn.SetWriteDeadline(time.Now().Add(timeoutDuration))
 	if err != nil {
-		log.Println("[NORMAL] TCP SEND ERR > TCPSend")
+		return fmt.Errorf("[Transport] [Error] Failed to set write deadline. Caused by %s.\n", err.Error())
 	}
+
 	_, err = conn.Write(payload)
 	if err != nil {
-		log.Println("[NORMAL] TCP WRITE ERROR > TCPSend")
+		return fmt.Errorf("[Transport] [Error] Failed to write replication request to %s. Caused by %s.\n", destinationIPv4, err.Error())
 	}
+	return nil
 }
-

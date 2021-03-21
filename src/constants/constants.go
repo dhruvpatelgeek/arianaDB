@@ -8,9 +8,10 @@ const (
 	ProcessStorageToStorageKVRequest
 
 	// don't know if we need this:
-	ProcessKeyMigrationRequest
+	SplitTableRequest
 
 	ProcessHeadTableMigrationRequest
+	ProcessMigratingHeadTableRequest
 )
 
 type TableSelection uint32
