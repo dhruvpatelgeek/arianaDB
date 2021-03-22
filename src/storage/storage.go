@@ -431,6 +431,10 @@ func (sm *StorageService) processKVRequest(request *protobuf.InternalMsg) error 
 	}
 
 	responseRequired := request.GetRespondToClient()
+	if responseRequired == false && cast_req.GetCommand() == GET {
+		fmt.Println("[Storage] [Error] Received a client Get request for which responseRequired is false.")
+	}
+
 	if responseRequired {
 		kvres := &protobuf.KVResponse{
 			ErrCode: &errCode,

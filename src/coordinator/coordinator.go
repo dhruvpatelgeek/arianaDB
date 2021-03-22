@@ -516,27 +516,29 @@ func (coordinator *CoordinatorService) processFailReqSuccessor(failedNodes []str
 		}
 	}
 
-	// TODO: send internal message to the predecessor and the great predecessor where to migrate its head table to
-	myPredecessor := coordinator.replicationService.FindPredecessorNode(coordinator.hostIPv4)
-	mySelf := coordinator.hostIPv4
-	mySuccessor := coordinator.replicationService.FindSuccessorNode(mySelf)
-	myGreatSuccessor := coordinator.replicationService.FindSuccessorNode(mySuccessor)
+	/*
+		// TODO: send internal message to the predecessor and the great predecessor where to migrate its head table to
+		myPredecessor := coordinator.replicationService.FindPredecessorNode(coordinator.hostIPv4)
+		mySelf := coordinator.hostIPv4
+		mySuccessor := coordinator.replicationService.FindSuccessorNode(mySelf)
+		myGreatSuccessor := coordinator.replicationService.FindSuccessorNode(mySuccessor)
 
-	myGreatPredecessor := coordinator.replicationService.FindPredecessorNode(myPredecessor)
+		myGreatPredecessor := coordinator.replicationService.FindPredecessorNode(myPredecessor)
 
-	err := coordinator.sendReplicationRequest(myPredecessor, mySelf, mySuccessor)
-	if err != nil {
-		fmt.Printf("[Coordinator] [Error] Unable to instruct my predecessor (%s) to replicate its head table while processing fail event.\n", myPredecessor)
-		return err
-	}
+		err := coordinator.sendReplicationRequest(myPredecessor, mySelf, mySuccessor)
+		if err != nil {
+			fmt.Printf("[Coordinator] [Error] Unable to instruct my predecessor (%s) to replicate its head table while processing fail event.\n", myPredecessor)
+			return err
+		}
 
-	err = coordinator.sendReplicationRequest(myGreatPredecessor, myPredecessor, mySelf)
-	if err != nil {
-		fmt.Printf("[Coordinator] [Error] Unable to instruct my great predecessor (%s) to replicate its head table while processing fail event.\n", myPredecessor)
-		return err
-	}
+		err = coordinator.sendReplicationRequest(myGreatPredecessor, myPredecessor, mySelf)
+		if err != nil {
+			fmt.Printf("[Coordinator] [Error] Unable to instruct my great predecessor (%s) to replicate its head table while processing fail event.\n", myPredecessor)
+			return err
+		}
 
-	coordinator.replicateTable(constants.Head, mySuccessor, myGreatSuccessor) // TODO:
+		coordinator.replicateTable(constants.Head, mySuccessor, myGreatSuccessor) // TODO:
+	*/
 	return nil
 }
 
