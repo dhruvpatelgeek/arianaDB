@@ -98,7 +98,7 @@ func New(
 	}
 	go sm.processStorageToStorageMessages()
 	go sm.processCoordinatorMessages()
-	// go sm.monitorKVStoreSize()
+	go sm.monitorKVStoreSize()
 
 	return &sm
 }
@@ -559,7 +559,7 @@ func getCurrMem() uint64 {
 
 func (sm *StorageService) monitorKVStoreSize() {
 	for {
-		time.Sleep(5 * time.Second)
+		time.Sleep(1 * time.Second)
 		fmt.Printf("[Storage] KVStores (Head: %d, Middle: %d, Tail: %d)\n",
 			len(sm.headKVStore), len(sm.middleKVStore), len(sm.tailKVStore))
 	}

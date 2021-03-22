@@ -1,0 +1,9 @@
+syntax = "proto3";
+package protobuf;
+option go_package = "pb/protobuf";
+
+message RepShell {
+  bytes message_ID =1;//UUIDV4
+  uint64 checksum=2; //crcIEEE
+  bytes payload=3;
+}

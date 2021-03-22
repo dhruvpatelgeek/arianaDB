@@ -57,6 +57,7 @@ type TransportModule struct {
 	connection                 *net.UDPConn
 	storageToStorageConnection *net.TCPListener
 	R2Rconnection              *net.UDPConn
+	G2Gconnection              *net.UDPConn
 
 	heartbeatChanel chan []byte
 	coodinatorChan  chan protobuf.InternalMsg
@@ -81,9 +82,13 @@ func New(ip string, clientToServerPort int, gmsChan chan []byte, coordinatorChan
 	tm.storageToStoragePort = strconv.Itoa(clientToServerPort + 1)
 	tm.hostIPv4 = ip + ":" + tm.storageToStoragePort
 	R2R_PORT := clientToServerPort + 2
+	G2G_PORT :=clientToServerPort + 3
+
 	r2rconn := createUDPConnection(ip, R2R_PORT)
 	tm.connection = createUDPConnection(ip, clientToServerPort)
 	tm.storageToStorageConnection = createTCPConnection(ip, tm.storageToStoragePort) // TODO: wtf is this?
+	tm.G2Gconnection=createUDPConnection(ip,G2G_PORT)
+
 	tm.R2Rconnection = r2rconn
 	tm.coodinatorChan = coordinatorChannel
 	tm.heartbeatChanel = gmsChan
@@ -293,6 +298,7 @@ func (tm *TransportModule) bootstrap() {
 	go tm.UDP_daemon()
 	go tm.processStorageToStorageMessages() // TODO: come up with better names for these daemons...
 	go tm.R2R_daemon()
+	go tm.G2G_daemon()
 }
 
 //for debug to view packet b4 sending
@@ -505,61 +511,7 @@ func (tm *TransportModule) TCPSend(payload []byte, destAddr string) {
 	}
 }
 
-func (tm *TransportModule) SendHeartbeat(heartbeat *protobuf.MembershipReq, destAddr string) error {
-	// TODO: marshal membership request
-	serializedHeartbeat, err := proto.Marshal(heartbeat)
-	if err != nil {
-		return err
-	}
-	messageID := []byte("gossip" + uuid.New().String())
 
-	message, err := generateShell(serializedHeartbeat, messageID)
-	if err != nil {
-		return err
-	}
-
-	addr, err := net.ResolveUDPAddr("udp", destAddr)
-	if err != nil {
-		return err
-	}
-
-	tm.connection.WriteToUDP(message, addr)
-	return nil
-}
-
-func (tm *TransportModule) SendStorageToStorage(storageMessage *protobuf.InternalMsg, destAddr string) error {
-	// TODO: consider using a separate port
-	// TODO: consider using a TCP port for higher throughput in milestone 3
-	serializedMessage, err := proto.Marshal(storageMessage)
-	if err != nil {
-		return err
-	}
-
-	// obtain the remote's S2S TCP port
-	splitDestinationAddress := strings.Split(destAddr, ":")
-	if len(splitDestinationAddress) != 2 {
-		return errors.New("destination address (" + destAddr + ") did not contain IP:PORT ")
-	}
-	destinationAddress := splitDestinationAddress[0]
-	destinationClientPort, err := strconv.Atoi(splitDestinationAddress[1])
-	if err != nil {
-		return err
-	}
-	destinationStorageToStoragePort := strconv.Itoa(destinationClientPort + 1) // TODO: create a function for this to remove duplicated magic constants
-	destinationIPv4 := destinationAddress + ":" + destinationStorageToStoragePort
-
-	s2sConnection, err := net.Dial("tcp", destinationIPv4)
-	if err != nil {
-		fmt.Println("FAILED TO DIAL TCP")
-		fmt.Println(err)
-		return errors.New("Unable to open a S2S TCP connection to " + destinationIPv4)
-	}
-	defer s2sConnection.Close() // TODO: maybe this is the error? someone forgot to close their connection? I think we also ran into this issue when we tried dialing too many?
-
-	// send data
-	_, err = s2sConnection.Write(serializedMessage)
-	return err
-}
 
 func (tm *TransportModule) CachedSendStorageToStorage(payload []byte, messageID string, destAddr string) {
 	cache_data([]byte(messageID), payload)
@@ -625,6 +577,54 @@ func (tm *TransportModule) SendCoordinatorToCoordinator(payload []byte, messageI
 
 //RAFT FUNCTIONS---------------------------------------------------------
 
+func (tm *TransportModule) SendStorageToStorage(storageMessage *protobuf.InternalMsg, destAddr string) error {
+	// TODO: consider using a separate port
+	// TODO: consider using a TCP port for higher throughput in milestone 3
+	log.Println("called SendStorageToStorage>>>>>>>>")
+	serializedMessage, err := proto.Marshal(storageMessage)
+	if err != nil {
+		return err
+	}
+
+	messageID:=[]byte(uuid.New().String())
+	checksum:=calculate_checksum(messageID,serializedMessage)
+	shell:=&protobuf.RepShell{
+		Message_ID: messageID,
+		Checksum:   checksum,
+		Payload:    serializedMessage,
+	}
+	serializedMessage_shell, err := proto.Marshal(shell)
+	if err != nil {
+		return err
+	}
+
+
+	splitDestinationAddress := strings.Split(destAddr, ":")
+	if len(splitDestinationAddress) != 2 {
+		return errors.New("destination address (" + destAddr + ") did not contain IP:PORT ")
+	}
+	destinationAddress := splitDestinationAddress[0]
+	destinationClientPort, err := strconv.Atoi(splitDestinationAddress[1])
+	if err != nil {
+		return err
+	}
+	destinationStorageToStoragePort := strconv.Itoa(destinationClientPort + 2) // TODO: create a function for this to remove duplicated magic constants
+	destinationIPv4 := destinationAddress + ":" + destinationStorageToStoragePort
+
+	addr, err := net.ResolveUDPAddr("udp", destinationIPv4)
+	//fmt.Println("SENDING MESSAGE......")
+	//fmt.Println(send_payload)
+
+	if err != nil {
+		log.Println("Address error ", err)
+	}
+	if err != nil {
+		fmt.Println("[CRITICAL] Casting error R2RSend")
+	}
+	tm.connection.WriteToUDP(serializedMessage_shell, addr)
+	return err
+}
+
 // a udp background function that reads the udp  byte buffer and calls the router
 func (tm *TransportModule) R2R_daemon() {
 
@@ -632,58 +632,38 @@ func (tm *TransportModule) R2R_daemon() {
 
 		buffer := make([]byte, 20100)
 		n, _, err := tm.R2Rconnection.ReadFromUDP(buffer)
-
 		for err != nil {
 			fmt.Println("listener failed - ", err)
 		}
-		casted_R2R := &protobuf.RaftShell{
-			Message_ID: nil,
-			Checksum:   nil,
-			Payload:    nil,
-			Type:       "",
+
+		payload := buffer[:n]
+		internal_unmarshalled:=&protobuf.RepShell{}
+		err=proto.Unmarshal(payload, internal_unmarshalled)
+
+		calculated_checksum:=calculate_checksum(internal_unmarshalled.Message_ID,internal_unmarshalled.Payload)
+
+		if(calculated_checksum!=internal_unmarshalled.Checksum) {
+			log.Println("[CHECKSUM ERROR]>>>>>>>>>>>>>>>>")
+			continue;
 		}
-		err = proto.Unmarshal(buffer[:n], casted_R2R)
+		internalMessage := &protobuf.InternalMsg{}
+		err = proto.Unmarshal(internal_unmarshalled.Payload, internal_unmarshalled)
 		if err != nil {
-			fmt.Println("[R2R CASITNG ERROR shell]", err, buffer[:n])
+			log.Println("[Transport] Unable to marshal a storage-to-storage request. Ignoring this message")
+			continue
 		}
 
-		if string(casted_R2R.Checksum) != strconv.FormatUint(calculate_checksum(casted_R2R.Message_ID, casted_R2R.Payload), 10) {
-			fmt.Println("[CHECKSUM ERR R2R]")
+		if internalMessage.Command == uint32(constants.ProcessMigratingHeadTableRequest) {
+			log.Println("HEREE [coodinatorChan]")
+			tm.coodinatorChan <- *internalMessage
 		} else {
-			raftPayload := &protobuf.RaftPayload{}
-			err = proto.Unmarshal(casted_R2R.Payload, raftPayload)
-			if err != nil {
-				fmt.Println("[R2R CASITNG ERROR payload]")
-			}
-			tm.raftChan <- *raftPayload
+			log.Println("HEREE [storageChannel]")
+			tm.storageChannel <- *internalMessage
 		}
 	}
 
 }
 
-func (tm *TransportModule) R2RSend(payload []byte, destAddr string) {
-	id := guuid.New()
-	messageID := []byte(id.String())
-
-	send_payload := &protobuf.RaftShell{
-		Message_ID: messageID,
-		Checksum:   []byte(strconv.FormatUint(calculate_checksum(messageID, payload), 10)),
-		Payload:    payload,
-		Type:       "general",
-	}
-	addr, err := net.ResolveUDPAddr("udp", destAddr)
-	//fmt.Println("SENDING MESSAGE......")
-	//fmt.Println(send_payload)
-
-	if err != nil {
-		log.Println("Address error ", err)
-	}
-	marshalled_send_payload, err := proto.Marshal(send_payload)
-	if err != nil {
-		fmt.Println("[CRITICAL] Casting error R2RSend")
-	}
-	tm.connection.WriteToUDP(marshalled_send_payload, addr)
-}
 
 //three way replication-------------------------------------------------------------
 
@@ -722,4 +702,76 @@ func (tm *TransportModule) ReplicationRequest(payload []byte, destAddr string) e
 		return fmt.Errorf("[Transport] [Error] Failed to write replication request to %s. Caused by %s.\n", destinationIPv4, err.Error())
 	}
 	return nil
+}
+
+
+func (tm *TransportModule) R2RSend(payload []byte, destAddr string) {
+	id := guuid.New()
+	messageID := []byte(id.String())
+
+	send_payload := &protobuf.RaftShell{
+		Message_ID: messageID,
+		Checksum:   []byte(strconv.FormatUint(calculate_checksum(messageID, payload), 10)),
+		Payload:    payload,
+		Type:       "general",
+	}
+	addr, err := net.ResolveUDPAddr("udp", destAddr)
+	//fmt.Println("SENDING MESSAGE......")
+	//fmt.Println(send_payload)
+
+	if err != nil {
+		log.Println("Address error ", err)
+	}
+	marshalled_send_payload, err := proto.Marshal(send_payload)
+	if err != nil {
+		fmt.Println("[CRITICAL] Casting error R2RSend")
+	}
+	tm.connection.WriteToUDP(marshalled_send_payload, addr)
+}
+
+
+// NEW PORT FOR GMS-------------------------------------------
+
+func (tm *TransportModule) G2G_daemon() {
+	for {
+		buffer := make([]byte, 20100)
+		n, _, err := tm.G2Gconnection.ReadFromUDP(buffer)
+		for err != nil {
+			fmt.Println("listener failed - ", err)
+		}
+		payload := buffer[:n]
+		//fmt.Println("<<<<<<<<<<<<RECIVING HEARTBEAT")
+		tm.heartbeatChanel <- payload
+	}
+
+}
+
+func (tm *TransportModule) SendHeartbeat(heartbeat *protobuf.MembershipReq, destAddr string) error {
+	//fmt.Println("SENDING HEARBEAT->>>>>>>>>")
+	serializedHeartbeat, err := proto.Marshal(heartbeat)
+	if err != nil {
+		return err
+	}
+	splitDestinationAddress := strings.Split(destAddr, ":")
+	if len(splitDestinationAddress) != 2 {
+		fmt.Println("[Transport] Error - destAddr ", destAddr)
+		return errors.New("[TCP] destination address (" + destAddr + ") did not contain IP:PORT ")
+	}
+	destinationAddress := splitDestinationAddress[0]
+	destinationClientPort, err := strconv.Atoi(splitDestinationAddress[1])
+	if err != nil {
+		return err
+	}
+	destinationStorageToStoragePort := strconv.Itoa(destinationClientPort + 3) // TODO: create a function for this to remove duplicated magic constants
+	destinationIPv4 := destinationAddress + ":" + destinationStorageToStoragePort
+
+
+	addr, err := net.ResolveUDPAddr("udp", destinationIPv4)
+	if err != nil {
+		return err
+	}
+
+	tm.connection.WriteToUDP(serializedHeartbeat, addr)
+	return nil
+
 }
