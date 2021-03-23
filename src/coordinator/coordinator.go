@@ -25,44 +25,14 @@ const IS_ALIVE = 6
 const GET_PID = 7
 const GET_MC = 8
 
-/** TODO: refactor storage and coordinator so that:
-1. storage is exclusively for committing to KVStore & responding to client
-2. coordinator makes the decision to route to different nodes.
+/** CoordinatorService is responsible for responding to external inputs (i.e.: client-to-server requests,
+server-to-server requests) and internal inputs (gms events).
 
-TODO: what is the purpose of the coordinator?
-- responsible for the mechanics of the re-routing
-	- ask ReplicationService where to process/forward
-		- if itself, send to storage
-		- if not, re-route to the correct node.
+TODO: add some comments on how forwarding and propagation works.
 
+TODO: add some comments on how node joins & fails are handled.
 */
 type CoordinatorService struct {
-	/** TODO: channels
-	1. GMS to Coordinator channel (for node joins and fails) (TODO: to be moved to the replication service)
-	2. Transport to Coordinator channel: (aka: receiveChannel inside storage)
-		- listens for
-	3. Coordinator to Storage channel:
-		- this is a channel which sends a message to
-			- commit the value
-			- respond to the client if necessary
-	4. Coordinator to ReplicationService channel:
-		- forward to replication service
-		- key migration
-
-	TODO: function calls
-	1. transport: yes
-		- for re-routing to the correct head node in the system (SendCoordinatorToCoordinator)
-
-
-		TODO:
-		1. put,get,remove,wipeout
-		2. shutdown, isalive, getprocessid, getMembershipcount (TODO: not storage related)
-			- shutdown: coordinator?
-			- isAlive: coordinator
-			- getProcessID: coordinator
-			- getMembershipCount: gms
-	*/
-	// TODO: it's not even using the gmsEventChannel
 	gmsEventChannel         chan membership.GMSEventMessage
 	incomingMessagesChannel chan protobuf.InternalMsg
 	toStorageChannel        chan protobuf.InternalMsg
@@ -113,15 +83,6 @@ func New(
 	return coordinator, nil
 }
 
-/**	TODO:
-1. get a message from the transport layer
-2. get the key from KVRequest by unmarshaling the InternalMsg.payload
-3. ask replication service what to do with the message (commit/forward) -> return ip of where to return
-4. if ip == self, then
-	- send message to storage (InternalMsg)
-5. otherwise,
-	- re-route to new destination
-*/
 func (coordinator *CoordinatorService) processIncomingMessages() {
 	for {
 		// retrieve incoming message
@@ -146,7 +107,7 @@ func (coordinator *CoordinatorService) processIncomingMessages() {
 			tailTableDestination := incomingMessage.GetReplicateTailTableDestination()
 			fmt.Printf("[Coordinator] Received a command from another node to replicate my head table to %s's middle table and %s's tail table.\n",
 				middleTableDestination, tailTableDestination)
-			go coordinator.replicateTable(constants.Head, middleTableDestination, tailTableDestination) // TODO: pass in the arguments for which node the middle and tail nodes to?
+			go coordinator.replicateTable(constants.Head, middleTableDestination, tailTableDestination)
 
 		default:
 			fmt.Printf("[Coordinator] [Warning] Received an unrecognized command. \n")
@@ -219,7 +180,6 @@ func (coordinator *CoordinatorService) processPropagatedRequest(incomingMessage 
 			coordinator.propagateRequest(outgoingMessage, destinationAddress)
 		}
 	}
-
 }
 
 // Sends a message to another node with the given ip address (destinationAddress).
@@ -234,8 +194,8 @@ func (coordinator *CoordinatorService) propagateRequest(outgoingMessage protobuf
 	coordinator.transport.SendCoordinatorToCoordinator(marshalledOutgoingMessage, []byte("reques"+string(outgoingMessage.MessageID)), destinationAddress)
 }
 
-//////////////////////////////////////////////////////////////////////////////////////////////////////////
-// Join Request:
+/**	TODO: write some docs
+ */
 func (coordinator *CoordinatorService) processGMSEvent() {
 	for {
 		gmsEvent := <-coordinator.gmsEventChannel
@@ -255,6 +215,9 @@ func (coordinator *CoordinatorService) processGMSEvent() {
 		}
 	}
 }
+
+/**	TODO: write some docs
+ */
 func (self *CoordinatorService) processJoinEvent(gmsEvent membership.GMSEventMessage) error {
 	// TODO: find out who we are relative to the new node (e.g.: successor, greatpredecessor, greatGreatPredecessor)
 	// TODO: try to use constants, not strings
@@ -384,12 +347,6 @@ func (coordinator *CoordinatorService) sendReplicationRequest(newNodeIP string, 
 	return err
 }
 
-// The following four function will send a propagate request to the corresponding destination,
-// and the destination will "propagate" its head table to replication nodes if it has received
-// kv-store from its successor. otherwise it'll not propagate.
-
-// This function will be called when migrating head has been finished, this is called from the storage layer.
-
 func (coordinator *CoordinatorService) replicateTable(originTableToReplicate constants.TableSelection, middleTableDestination string, tailTableDestination string) {
 	err := coordinator.storageService.MigrateEntireTable(middleTableDestination, constants.Head, constants.Middle)
 	if err != nil {
@@ -397,7 +354,6 @@ func (coordinator *CoordinatorService) replicateTable(originTableToReplicate con
 		return
 	}
 
-	// TODO: send internal message to the storage layer to send the head replication to the successor of the current successor
 	err = coordinator.storageService.MigrateEntireTable(tailTableDestination, constants.Head, constants.Tail)
 	if err != nil {
 		fmt.Printf("[Coordinator] Failed to replicate head table to destination's (%s) middle table. Caused by: %s \n", middleTableDestination, err.Error())
@@ -405,9 +361,8 @@ func (coordinator *CoordinatorService) replicateTable(originTableToReplicate con
 	return
 }
 
-///////////////////////////////////////////////////////////////////////////////////////////
-// failure request
-
+/**	TODO: write some docs
+ */
 func (self *CoordinatorService) processFailEvent(gmsEvent membership.GMSEventMessage) error {
 	// merge local tables TODO:
 
@@ -522,26 +477,26 @@ func (coordinator *CoordinatorService) processFailReqSuccessor(failedNodes []str
 		}
 	}
 
-		// TODO: send internal message to the predecessor and the great predecessor where to migrate its head table to
-		myPredecessor := coordinator.replicationService.FindPredecessorNode(coordinator.hostIPv4)
-		mySelf := coordinator.hostIPv4
-		mySuccessor := coordinator.replicationService.FindSuccessorNode(mySelf)
-		myGreatSuccessor := coordinator.replicationService.FindSuccessorNode(mySuccessor)
+	// TODO: send internal message to the predecessor and the great predecessor where to migrate its head table to
+	myPredecessor := coordinator.replicationService.FindPredecessorNode(coordinator.hostIPv4)
+	mySelf := coordinator.hostIPv4
+	mySuccessor := coordinator.replicationService.FindSuccessorNode(mySelf)
+	myGreatSuccessor := coordinator.replicationService.FindSuccessorNode(mySuccessor)
 
-		myGreatPredecessor := coordinator.replicationService.FindPredecessorNode(myPredecessor)
+	myGreatPredecessor := coordinator.replicationService.FindPredecessorNode(myPredecessor)
 
-		err := coordinator.sendReplicationRequest(myPredecessor, mySelf, mySuccessor)
-		if err != nil {
-			fmt.Printf("[Coordinator] [Error] Unable to instruct my predecessor (%s) to replicate its head table while processing fail event.\n", myPredecessor)
-			return err
-		}
+	err := coordinator.sendReplicationRequest(myPredecessor, mySelf, mySuccessor)
+	if err != nil {
+		fmt.Printf("[Coordinator] [Error] Unable to instruct my predecessor (%s) to replicate its head table while processing fail event.\n", myPredecessor)
+		return err
+	}
 
-		err = coordinator.sendReplicationRequest(myGreatPredecessor, myPredecessor, mySelf)
-		if err != nil {
-			fmt.Printf("[Coordinator] [Error] Unable to instruct my great predecessor (%s) to replicate its head table while processing fail event.\n", myPredecessor)
-			return err
-		}
-		coordinator.replicateTable(constants.Head, mySuccessor, myGreatSuccessor)
+	err = coordinator.sendReplicationRequest(myGreatPredecessor, myPredecessor, mySelf)
+	if err != nil {
+		fmt.Printf("[Coordinator] [Error] Unable to instruct my great predecessor (%s) to replicate its head table while processing fail event.\n", myPredecessor)
+		return err
+	}
+	coordinator.replicateTable(constants.Head, mySuccessor, myGreatSuccessor)
 
 	return nil
 }
