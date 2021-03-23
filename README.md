@@ -45,6 +45,8 @@ Although inefficient when we scale, we implemented this algorithm because the ma
 We implemented two timeouts to be more tolerant to packet losses. If we removed nodes when the node detects for failures every ***T_fail*** ms, there is a chance that a heartbeat is not received due to packet loss or because by chance, the sender did not choose to send to this node.
 By having a cleanup period ***T_cleanup*** >>> ***T_fail***, we can build more confidence that a node has truly failied. 
 
+![alt text](/images/JOIN.jpg)
+
 // ADDED:
 To handle failure:
 If we haven't received any heartbeat message within ***T_cleanup*** period from now, we will mark a node as failure and send all the fail nodes to coordinator layer. The coordinator layer will ask the replication layer the relationship between this node and the fail node:
