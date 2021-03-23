@@ -1,10 +1,6 @@
 package replication
 
 import (
-
-	//"log"
-	//"fmt"
-
 	"dht/src/membership"
 	"dht/src/structure"
 	"math/big"
@@ -36,6 +32,8 @@ func New(hostIP string, hostPort string,
 	return rs
 }
 
+// Finds the range of hashes (lower bound and upper bound) that the node with
+// the given ip address was responsible for.
 func (rs *ReplicationService) GetMigrationRange(ipv4 string) (string, string) {
 	nodeHashInt := structure.HashKey(ipv4)
 
@@ -55,12 +53,12 @@ func (rs *ReplicationService) IsPredecessor(ipv4 string) bool {
 	return ipv4 == predecessor
 }
 
-/** FindPredecessorNode(ipv4 string) returns the predecessor of the reference node???
- */
+// Finds the ip address of the given node's (ipv4) predecessor
 func (rs *ReplicationService) FindPredecessorNode(ipv4 string) string {
 	return rs.findPredecessorFromHash(structure.HashKey(ipv4))
 }
 
+// Finds the ip address of the given hash value's predecessor
 func (rs *ReplicationService) findPredecessorFromHash(hash *big.Int) string {
 	nodeList := rs.gms.GetAllNodes()
 
@@ -84,7 +82,6 @@ func (rs *ReplicationService) findPredecessorFromHash(hash *big.Int) string {
 // @param key
 // @return string - Location of node responsible for the given key
 func (rs *ReplicationService) FindSuccessorNode(key string) string {
-	// TODO: for the same key, this is giving different results
 	if len(key) == 0 {
 		return rs.hostIPv4
 	}
@@ -114,7 +111,7 @@ func (rs *ReplicationService) findSuccessorNodeFromHash(hash *big.Int) string {
 	return responsibleNode
 }
 
-// TODO:
+// Finds the number of nodes in the given list that are between the calling node, and its predecessor
 func (rs *ReplicationService) GetNumFailedNodesBetweenSelfAndNextAlivePredecessor(failedNodes []string) int {
 	numOfFailNodesInBetween := 0
 

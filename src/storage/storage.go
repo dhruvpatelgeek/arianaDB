@@ -98,7 +98,7 @@ func New(
 	}
 	go sm.processStorageToStorageMessages()
 	go sm.processCoordinatorMessages()
-	go sm.monitorKVStoreSize()
+	//go sm.monitorKVStoreSize()
 
 	return &sm
 }
@@ -128,7 +128,6 @@ func (sm *StorageService) processStorageToStorageMessages() {
 			}
 
 			// process restricted kv request
-			// TODO: why isn't this using the processKVRequest() function?
 			// TODO: Should follow the same pattern using processClientKVRequest & processPropagatedKVRequest
 			switch kvCommand := kvRequest.GetCommand(); kvCommand {
 			case PUT:
@@ -141,12 +140,12 @@ func (sm *StorageService) processStorageToStorageMessages() {
 			}
 		default:
 			fmt.Printf("[Storage] Storage-to-Storage received an unsupported InternalMsg command (%d). Only supports (%d) command.\n", internalMsgCommand, constants.ProcessStorageToStorageKVRequest)
-			fmt.Printf("Supported commands are ProcessClientKVRequest (%d)\n", constants.ProcessClientKVRequest)
-			fmt.Printf("Supported commands are ProcessPropagatedKVRequest (%d)\n", constants.ProcessPropagatedKVRequest)
-			fmt.Printf("Supported commands are ProcessStorageToStorageKVRequest (%d)\n", constants.ProcessStorageToStorageKVRequest)
-			fmt.Printf("Supported commands are SplitTableRequest (%d)\n", constants.SplitTableRequest)
-			fmt.Printf("Supported commands are ProcessHeadTableMigrationRequest (%d)\n", constants.ProcessHeadTableMigrationRequest)
-			fmt.Printf("Supported commands are ProcessMigratingHeadTableRequest (%d)\n", constants.ProcessMigratingHeadTableRequest)
+			fmt.Printf("\t Command 'ProcessClientKVRequest': (%d)\n", constants.ProcessClientKVRequest)
+			fmt.Printf("\t Command 'ProcessPropagatedKVRequest': (%d)\n", constants.ProcessPropagatedKVRequest)
+			fmt.Printf("\t Command 'ProcessStorageToStorageKVRequest': (%d)\n", constants.ProcessStorageToStorageKVRequest)
+			fmt.Printf("\t Command 'SplitTableRequest': (%d)\n", constants.SplitTableRequest)
+			fmt.Printf("\t Command 'ProcessHeadTableMigrationRequest': (%d)\n", constants.ProcessHeadTableMigrationRequest)
+			fmt.Printf("\t Command 'ProcessMigratingHeadTableRequest': (%d)\n", constants.ProcessMigratingHeadTableRequest)
 		}
 	}
 }
@@ -229,7 +228,6 @@ func (sm *StorageService) MigratePartialTable(destination string,
 	}
 	kvStoreLock.Unlock()
 
-	// check if wrap around
 	return nil
 }
 
@@ -246,7 +244,12 @@ func (sm *StorageService) getKVStore(tableSelection constants.TableSelection) (m
 	}
 }
 
-// ASSUMES callee already holds the lock to sm.kvStore
+/** migrateKey() migrates a key-value pair from the local key-value store to
+the rdestination's table. The local key is not deleted after the migration. migrateKey()
+throws an error if it was unable to migrate the key.
+
+- assumes callee already holds the lock to sm.kvStore
+*/
 func (sm *StorageService) migrateKey(
 	kvStore map[string][]byte,
 	key string, value []byte,
@@ -311,8 +314,6 @@ func (sm *StorageService) MigrateEntireTable(destination string,
 		}
 	}
 
-	// TODO: it looks like we're not wiping out our own table after migration?
-
 	return nil
 }
 
@@ -351,7 +352,6 @@ func (sm *StorageService) MergeTables(
 	}
 
 	// clear source table for ease of debugging
-	// TODO: should I not delete?
 	for k := range sourceKVStore {
 		delete(sourceKVStore, k)
 	}
@@ -361,6 +361,12 @@ func (sm *StorageService) MergeTables(
 	return nil
 }
 
+/** wipeoutDestinationTable() attempts to wipeout the destination table by making a wipeout request. Returns
+nil if the wipeout request was successfully sent. Nil return value doesn't imply that the destination table
+is wiped, only that the request has been sent.
+
+- throws an error if the wipeout request failed to send.
+*/
 func (sm *StorageService) wipeoutDestinationTable(destination string, destinationTable constants.TableSelection) error {
 	internalMessage, err := createWipeoutDestinationTableKVRequest(destination, destinationTable)
 	if err != nil {
