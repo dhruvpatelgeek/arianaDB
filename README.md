@@ -7,18 +7,15 @@ Team members: Dhruv Patel, Caleb Sattler, Danny Lee, Patrick Huang
     - For example, if servers.txt exists in "/root/mount/servers.txt" in the host, then run the command: `docker run --network host -p 7262/udp -v /root/mount:/etc/cpen431 dht ./dht-server 7262 /etc/cpen431/servers.txt &`
 
 ### System Overview
-![Basic system architecture](images/M1_Arch.png)
+![Basic system architecture](images/M2_Arch.png)
 
 
 Spirit of Fire's distributed hash table (DHT) is composed of 3 components in Milestone 1: the transport layer, the storage component, and the group membership service.
 
 Sitting at the base of the application, the transport layer allows the storage component and the group membership service to communicate with other nodes via UDP while upholding at-most-once semantics via a message cache.
 
-The storage service manages the distributed hash table functionality. When it receives a request from the transport layer either sent by a client or another node, the storage service processes it by:
-1. obtaining a list of the current nodes in the system from the group membership service,
-2. determining who could be responsible for the request by consistent-hashing.
-3. Forward the request to another node if itself is not responsible, or handle the request.
-When the client sends to a request to one node, it may receive a response from another if the initial destination was not responsible for the message in the message sample space.
+The storage module handles the key-value store operations, including client requests, and migrating keys when a node joins the system, or a node in the system fails. 
+Specifics of the key migrations can be found in the failure handling section below.
 
 The replication follows a similar replica placement strategy as the [Hibari](http://www.snookles.com/scott/publications/erlang2010-slf.pdf) placement strategy: Each node contains a head, a middle, and a tail table.
 As long as there are three or more nodes in the system, each of these tables is a part of a different chain.
