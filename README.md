@@ -25,10 +25,10 @@ As long as there are three or more nodes in the system, each of these tables is 
 | **Head1**  | Middle1   | Tail1    |
 | Tail2      | **Head2** | Middle2  |
 | Middle3    | Tail3     | **Head3**|
+
 Figure: Replica placement strategy
 
-The group membership service maintains a list of all nodes in the system using a [push-based gossip protocol described in Indranil Gupta](https://courses.engr.illinois.edu/cs425/fa2014/L4.fa14.pdf). To summarize, each node sends a heartbeat message to a subset of its membership list every cycle. When a node receives a heartbeat message, it marks the local time at which the sender sent a heartbeat message. Periodically, it runs a fail routine and cleanup routine which marks nodes as failed if no heartbeat was sent.
-
+The group membership service maintains a list of all nodes in the system using a [push-based gossip protocol described in Indranil Gupta](https://courses.engr.illinois.edu/cs425/fa2014/L4.fa14.pdf). 
 
 ### Transport Layer
 Transport has 4 ports for handling I/O:
@@ -36,6 +36,7 @@ Transport has 4 ports for handling I/O:
 2. ````PORT+1```` is a TCP Port; used exclusively for coordinator to coordinator communications
 3. ````PORT+2````  is a UDP Port for high throughput key migration 
 4. ````PORT+3````  is a UDP Port for high throughput gossipe messeging service 
+
 Transport layer has listener daemons on each of these ports with chans to forward those messages in order to send these messages we use a function call.
 
 ### Storage Service
@@ -45,4 +46,4 @@ The storage service module maintains a map based key-value store, and executes c
 CoordinatorService is responsible for responding to external inputs (i.e.: client-to-server requests, server-to-server requests) and internal inputs (GMS events). Client update requests are routed to the head node of the chain, then propagated down its chain to the successor's middle table and the grand-successor's tail table. After the request has been handled at the tail node, the response is sent to the client. When the GMS notifies the coordinator about new nodes or failed nodes, the coordinator will re-distribute the keys in the system to maintain the chain replication's fault-tolerance invariant.
 
 ### Group Membership Service
-Spirit of Fire's Group Membership Service (GMS) implements a push-based gossip protocol based on [Lecture 4: Failure Detection and Membership by Indranil Gupta (Indy)](https://courses.engr.illinois.edu/cs425/fa2014/L4.fa14.pdf). GMS uses periodic heartbeats to maintain the membership service. It detects node joins by giving the new node a copy of the membership list and letting the new node pulsate to existing nodes. GMS detects node failures when a heartbeat hasn't been received in a threshold period.
+Spirit of Fire's Group Membership Service (GMS) implements a push-based gossip protocol based on [Lecture 4: Failure Detection and Membership by Indranil Gupta (Indy)](https://courses.engr.illinois.edu/cs425/fa2014/L4.fa14.pdf). To summarize, each node sends a heartbeat message to a subset of its membership list every cycle. When a node receives a heartbeat message, it marks the local time at which the sender sent a heartbeat message. Periodically, it runs a fail routine and cleanup routine which marks nodes as failed if no heartbeat was sent. When it detects a new node or failed node, the GMS will notify the other components.

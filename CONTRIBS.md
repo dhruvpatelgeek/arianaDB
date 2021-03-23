@@ -10,6 +10,13 @@ Whereas most groups divide work to individuals and integrate at the end with lit
 - ````CLewisS (Caleb Sattler)````		-> Storage,Transport and Optimizations 
 - ````dhruvpatelgeek(Dhruv Patel)````	-> Storage,Transport and Optimizations 
 
+### Milestone 2 Contributions.
+- ````Datsgood (Danny Lee)````			-> Equal contributions
+- ````patrick-ubc(Patrick Huang)````	-> Equal contributions
+- ````CLewisS (Caleb Sattler)````		-> Equal contributions
+- ````dhruvpatelgeek(Dhruv Patel)````	-> Equal contributions
+
+
 Note : We have 2 more repos previously, and most of the git commit history can be
 found in those repos(https://github.com/Datsgood/cpen431-sathish-dream-team && 
 https://github.com/CLewisS/new-beginnings). We did a lot of pair programming and
