@@ -20,6 +20,17 @@ The storage service manages the distributed hash table functionality. When it re
 3. Forward the request to another node if itself is not responsible, or handle the request.
 When the client sends to a request to one node, it may receive a response from another if the initial destination was not responsible for the message in the message sample space.
 
+The replication follows a similar replica placement strategy as the [Hibari](http://www.snookles.com/scott/publications/erlang2010-slf.pdf) placement strategy: Each node contains a head, a middle, and a tail table.
+As long as there are three or more nodes in the system, each of these tables is a part of a different chain.
+
+
+| Node 1     | Node 2    | Node 3   |
+|------------|-----------|----------|
+| **Head1**  | Middle1   | Tail1    |
+| Tail2      | **Head2** | Middle2  |
+| Middle3    | Tail3     | **Head3**|
+Figure: Replica placement strategy
+
 The group membership service maintains a list of all nodes in the system using a [push-based gossip protocol described in Indranil Gupta](https://courses.engr.illinois.edu/cs425/fa2014/L4.fa14.pdf). To summarize, each node sends a heartbeat message to a subset of its membership list every cycle. When a node receives a heartbeat message, it marks the local time at which the sender sent a heartbeat message. Periodically, it runs a fail routine and cleanup routine which marks nodes as failed if no heartbeat was sent.
 
 
@@ -27,7 +38,12 @@ The group membership service maintains a list of all nodes in the system using a
 We used the same transport layer from PA2 but we refactored it to take less space (10X less) and we switched from modular to OOP paradigm 
 ### Storage Service
 The storage service module maintains a map based key-value store, and executes consistent hasing for key distribution amongst nodes using SHA256.
- 
+
+### Request Propagation
+Our system uses a chain based replication where each chain contains three consecutive nodes in the hash ring. 
+Update requests are routed to the head node of the chain (which is determined by finding the successor node of the hash of the request's key), and then to the middle node (the head node's successor), and finally the tail node (the middle's successor). After the request has been handled at the tail node, the response is sent to the client.
+Read requests are routed tot he head of the chain, and then the response is sent to the client.
+
 ### Group Membership Service
 Spirit of Fire's Group Membership Service (GMS) implements a push-based gossip protocol based on [Lecture 4: Failure Detection and Membership by Indranil Gupta (Indy)](https://courses.engr.illinois.edu/cs425/fa2014/L4.fa14.pdf). 
 

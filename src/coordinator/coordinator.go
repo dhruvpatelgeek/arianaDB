@@ -157,6 +157,9 @@ func (coordinator *CoordinatorService) processIncomingMessages() {
 	}
 }
 
+// Handles client requests received by the callingnode. If the calling node is responsible for the request then it will be handled,
+// and forwarded to the next node in the chain if necessary. If the calling node is not responsible for the request, 
+// then the request is sent to the responsible node
 func (coordinator *CoordinatorService) processClientRequest(incomingMessage protobuf.InternalMsg, kvRequest *protobuf.KVRequest) {
 	destinationAddress := coordinator.replicationService.FindSuccessorNode(string(kvRequest.Key))
 	destinationTable := uint32(constants.Head)
@@ -193,6 +196,7 @@ func (coordinator *CoordinatorService) processClientRequest(incomingMessage prot
 	coordinator.propagateRequest(outgoingMessage, destinationAddress)
 }
 
+// Handles any requests that have been forwarded by other nodes, and forwards the request if necessary 
 func (coordinator *CoordinatorService) processPropagatedRequest(incomingMessage protobuf.InternalMsg, kvRequest *protobuf.KVRequest) {
 	coordinator.toStorageChannel <- incomingMessage
 
@@ -218,6 +222,8 @@ func (coordinator *CoordinatorService) processPropagatedRequest(incomingMessage 
 
 }
 
+// Sends a message to another node with the given ip address (destinationAddress).
+// The message is not guaranteed to be delivered to the destination.
 func (coordinator *CoordinatorService) propagateRequest(outgoingMessage protobuf.InternalMsg, destinationAddress string) {
 	marshalledOutgoingMessage, err := proto.Marshal(&outgoingMessage)
 	if err != nil {
