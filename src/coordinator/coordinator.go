@@ -119,7 +119,7 @@ func (coordinator *CoordinatorService) processIncomingMessages() {
 }
 
 // Handles client requests received by the callingnode. If the calling node is responsible for the request then it will be handled,
-// and forwarded to the next node in the chain if necessary. If the calling node is not responsible for the request, 
+// and forwarded to the next node in the chain if necessary. If the calling node is not responsible for the request,
 // then the request is sent to the responsible node
 func (coordinator *CoordinatorService) processClientRequest(incomingMessage protobuf.InternalMsg, kvRequest *protobuf.KVRequest) {
 	destinationAddress := coordinator.replicationService.FindSuccessorNode(string(kvRequest.Key))
@@ -157,7 +157,7 @@ func (coordinator *CoordinatorService) processClientRequest(incomingMessage prot
 	coordinator.propagateRequest(outgoingMessage, destinationAddress)
 }
 
-// Handles any requests that have been forwarded by other nodes, and forwards the request if necessary 
+// Handles any requests that have been forwarded by other nodes, and forwards the request if necessary
 func (coordinator *CoordinatorService) processPropagatedRequest(incomingMessage protobuf.InternalMsg, kvRequest *protobuf.KVRequest) {
 	coordinator.toStorageChannel <- incomingMessage
 
@@ -359,18 +359,18 @@ func (coordinator *CoordinatorService) replicateTable(originTableToReplicate con
 	return
 }
 
-/**	
-	The coordinator layer will ask the replication layer the relationship between this node and the fail node:
-	- if this node is the successor of the failnode, then it will
-		- merge the ***HEAD*** table and ***MIDDLE*** table 
-		- send replication request to the predecessor and grand predecessor of the fail node to replicate theirs ***HEAD*** table to their successor and grand successor
-		- replicate this node's ***HEAD*** table to its successor and grant successor
-	- if this node is at least the grand successor of the fail node, then it will:
-		- merge the ***HEAD*** table, ***MIDDLE*** table, and ***TAIL*** table. 
-		- send replication request to the predecessor and grand predecessor of the fail node to replicate theirs ***HEAD*** table to their successor and grand successor
-		- replicate this node's ***HEAD*** table to its successor and grant successor
-	- otherwise do nothing
- */
+/**
+The coordinator layer will ask the replication layer the relationship between this node and the fail node:
+- if this node is the successor of the failnode, then it will
+	- merge the ***HEAD*** table and ***MIDDLE*** table
+	- send replication request to the predecessor and grand predecessor of the fail node to replicate theirs ***HEAD*** table to their successor and grand successor
+	- replicate this node's ***HEAD*** table to its successor and grant successor
+- if this node is at least the grand successor of the fail node, then it will:
+	- merge the ***HEAD*** table, ***MIDDLE*** table, and ***TAIL*** table.
+	- send replication request to the predecessor and grand predecessor of the fail node to replicate theirs ***HEAD*** table to their successor and grand successor
+	- replicate this node's ***HEAD*** table to its successor and grant successor
+- otherwise do nothing
+*/
 func (self *CoordinatorService) processFailEvent(gmsEvent membership.GMSEventMessage) error {
 	// merge local tables TODO:
 
@@ -380,22 +380,8 @@ func (self *CoordinatorService) processFailEvent(gmsEvent membership.GMSEventMes
 	}
 	failedNodes := gmsEvent.Nodes
 
-	/* TODO: what should we do when we have multiple failures (not just 2, but more)
-	- regardless of how many fail,
-		- for the successor,
-			- if it detects that its predecessor + great predecessor failed, then merge head+middle+tail
-			- else if it detects that its predecessor failed & the great predecessor did not fail, merge head + middle
-			- else (neither predecessor + greatpredecessor failed), then do no merging
-
-		- TODO: how to fix the race condition:
-			- successor tells the predecessor where to replicate its head table to
-			- successor tells the greatPredecessor where to replicate its head table to
-	*/
 	// check self's heritage in relation to the new node
 	isSuccessor := self.isSuccessorOfAnyFailNode(failedNodes)
-	// isPredecessor := self.isPredecessorOfAnyFailNode(failedNodes)
-	// isGreatPredecessor := self.isGreatPredecessorOfAnyFailNode(failedNodes)
-	// fmt.Printf("[Coordinator] [Debug] Fail event: isSuccessor: %t, isPredecessor: %t, isGreatPredecessor: %t \n", isSuccessor, isPredecessor, isGreatPredecessor)
 
 	if isSuccessor {
 		fmt.Printf("[Coordinator] Nodes (%v) failed. We are the successor of a failed node. \n", failedNodes)
@@ -422,7 +408,6 @@ func (self *CoordinatorService) isSuccessorOfAnyFailNode(failedNodes []string) b
 
 	return false
 }
-
 
 // TO DELETE
 func (self *CoordinatorService) isPredecessorOfAnyFailNode(failedNodes []string) bool {
@@ -475,11 +460,10 @@ func (coordinator *CoordinatorService) processFailReqPredecessor() error {
 	return nil
 }
 
-
 /**
-	 - If there are only 1 node between me(this node) and my current predecessor, then this node will merge
-	its Head table and Middle table
-	 - else, it will merge its Head table, Middle table, and Tail table.
+ - If there are only 1 node between me(this node) and my current predecessor, then this node will merge
+its Head table and Middle table
+ - else, it will merge its Head table, Middle table, and Tail table.
 */
 func (coordinator *CoordinatorService) processFailReqSuccessor(failedNodes []string) error {
 	// if we are the successor, merge the head table with other tables
@@ -496,7 +480,6 @@ func (coordinator *CoordinatorService) processFailReqSuccessor(failedNodes []str
 		}
 	}
 
-	// TODO: send internal message to the predecessor and the great predecessor where to migrate its head table to
 	mySelf := coordinator.hostIPv4
 	mySuccessor := coordinator.replicationService.FindSuccessorNode(mySelf)
 	myGreatSuccessor := coordinator.replicationService.FindSuccessorNode(mySuccessor)
