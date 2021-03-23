@@ -1,3 +1,33 @@
+# Test Setup
+
+TEST SETUP 
+
+On GCP E2 Micros Deployed with containier optimized OS >> AT
+
+8 servers US east 
+
+4 servers US central 
+
+8 servers US west
+
+![](../images/gcp_instances.png)
+
+
+
+
+
+# Verification code
+
+![](../images/verification_code.png)
+
+
+
+
+
+# output log
+
+
+
 ```shell
 cat results.log && tail -f results.log
 CPEN 431 Test Client
