@@ -36,7 +36,24 @@ The group membership service maintains a list of all nodes in the system using a
 
 
 ### Transport Layer
-We used the same transport layer from PA2 but we refactored it to take less space (10X less) and we switched from modular to OOP paradigm 
+Transport has 4 ports for handling I/O
+
+````PORT+0```` is a UDP Port; multiplex and used for forwarding messages between nodes and handelling client request 
+
+````PORT+1```` is a TCP Port; used exclusively for coordinator to coordinator communications
+
+````PORT+2````  is a UDP Port for high throughput key migration 
+
+````PORT+3````  is a UDP Port for high throughput gossipe messeging service 
+
+
+
+Transport layer has listener daemons on each of these ports with chans to forward those messages
+
+in order to send these messages we use a function call.
+
+
+
 ### Storage Service
 The storage service module maintains a map based key-value store, and executes consistent hasing for key distribution amongst nodes using SHA256.
 
