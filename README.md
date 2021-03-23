@@ -10,7 +10,7 @@ Team members: Dhruv Patel, Caleb Sattler, Danny Lee, Patrick Huang
 ![Basic system architecture](images/M2_Arch.png)
 
 
-Spirit of Fire's distributed hash table (DHT) is composed of 3 components in Milestone 1: the transport layer, the storage component, and the group membership service.
+Spirit of Fire's distributed hash table (DHT) is composed of 5 components in Milestone 2: the transport layer, the storage component, the coordinator, the replication service, and the group membership service.
 
 Sitting at the base of the application, the transport layer allows the storage component and the group membership service to communicate with other nodes via UDP while upholding at-most-once semantics via a message cache.
 
