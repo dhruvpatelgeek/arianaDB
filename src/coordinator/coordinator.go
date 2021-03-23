@@ -516,7 +516,6 @@ func (coordinator *CoordinatorService) processFailReqSuccessor(failedNodes []str
 		}
 	}
 
-	/*
 		// TODO: send internal message to the predecessor and the great predecessor where to migrate its head table to
 		myPredecessor := coordinator.replicationService.FindPredecessorNode(coordinator.hostIPv4)
 		mySelf := coordinator.hostIPv4
@@ -536,9 +535,8 @@ func (coordinator *CoordinatorService) processFailReqSuccessor(failedNodes []str
 			fmt.Printf("[Coordinator] [Error] Unable to instruct my great predecessor (%s) to replicate its head table while processing fail event.\n", myPredecessor)
 			return err
 		}
+		coordinator.replicateTable(constants.Head, mySuccessor, myGreatSuccessor)
 
-		coordinator.replicateTable(constants.Head, mySuccessor, myGreatSuccessor) // TODO:
-	*/
 	return nil
 }
 
