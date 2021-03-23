@@ -44,5 +44,21 @@ Although inefficient when we scale, we implemented this algorithm because the ma
 
 We implemented two timeouts to be more tolerant to packet losses. If we removed nodes when the node detects for failures every ***T_fail*** ms, there is a chance that a heartbeat is not received due to packet loss or because by chance, the sender did not choose to send to this node.
 By having a cleanup period ***T_cleanup*** >>> ***T_fail***, we can build more confidence that a node has truly failied. 
+
+// ADDED:
+To handle failure:
+If we haven't received any heartbeat message within ***T_cleanup*** period from now, we will mark a node as failure and send all the fail nodes to coordinator layer. The coordinator layer will ask the replication layer the relationship between this node and the fail node:
+ - if this node is the successor of the failnode, then it will
+    - merge the ***HEAD*** table and ***MIDDLE*** table 
+    - send replication request to the predecessor and grand predecessor of the fail node to replicate theirs ***HEAD*** table to their successor and grand successor
+    - replicate this node's ***HEAD*** table to its successor and grant successor
+ - if this node is at least the grand successor of the fail node, then it will:
+    - merge the ***HEAD*** table, ***MIDDLE*** table, and ***TAIL*** table. 
+    - send replication request to the predecessor and grand predecessor of the fail node to replicate theirs ***HEAD*** table to their successor and grand successor
+    - replicate this node's ***HEAD*** table to its successor and grant successor
+ - otherwise do nothing
+Whenever a node receives ***Replication Request***, it will send its ***HEAD*** table to its successor and grand successor.
+
+
 #### Other Considerations
 Initially, we implemented Chord's gossip protocol for the group membership service by having nodes gossip to its neighbours. However, we did not like how long a gossip propagated throughout the network, and thought it would scale poorly with 50+ nodes by milestone 3.
