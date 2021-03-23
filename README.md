@@ -29,6 +29,7 @@ As long as there are three or more nodes in the system, each of these tables is 
 | **Head1**  | Middle1   | Tail1    |
 | Tail2      | **Head2** | Middle2  |
 | Middle3    | Tail3     | **Head3**|
+
 Figure: Replica placement strategy
 
 The group membership service maintains a list of all nodes in the system using a [push-based gossip protocol described in Indranil Gupta](https://courses.engr.illinois.edu/cs425/fa2014/L4.fa14.pdf). To summarize, each node sends a heartbeat message to a subset of its membership list every cycle. When a node receives a heartbeat message, it marks the local time at which the sender sent a heartbeat message. Periodically, it runs a fail routine and cleanup routine which marks nodes as failed if no heartbeat was sent.
