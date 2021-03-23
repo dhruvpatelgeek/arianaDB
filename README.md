@@ -20,12 +20,7 @@ The storage module handles the key-value store operations, including client requ
 The replication follows a similar replica placement strategy as the [Hibari](http://www.snookles.com/scott/publications/erlang2010-slf.pdf) placement strategy: Each node contains a head, a middle, and a tail table.
 As long as there are three or more nodes in the system, each of these tables is a part of a different chain.
 
-| Node 1     | Node 2    | Node 3   |
-|------------|-----------|----------|
-| **Head1**  | Middle1   | Tail1    |
-| Tail2      | **Head2** | Middle2  |
-| Middle3    | Tail3     | **Head3**|
-
+![alt text](/images/JOIN.jpg)
 Figure: Replica placement strategy
 
 The group membership service maintains a list of all nodes in the system using a [push-based gossip protocol described in Indranil Gupta](https://courses.engr.illinois.edu/cs425/fa2014/L4.fa14.pdf). 
