@@ -1,6 +1,8 @@
 # Spirit of Fire: Distributed Hash Table
 Team members: Dhruv Patel, Caleb Sattler, Danny Lee, Patrick Huang
 
+##### Verification code : 2CE3F2F (check ./results/results.md for log)
+
 ### Instructions
 1. To build the project, run the command: `docker build -t dht .`
 2. To run the project, run the command: `docker run --network host -p 7262/udp -v /root/mount:/etc/cpen431 dht ./dht-server 7262 /etc/cpen431/servers.txt &`
@@ -33,7 +35,24 @@ The group membership service maintains a list of all nodes in the system using a
 
 
 ### Transport Layer
-We used the same transport layer from PA2 but we refactored it to take less space (10X less) and we switched from modular to OOP paradigm 
+Transport has 4 ports for handling I/O
+
+````PORT+0```` is a UDP Port; multiplex and used for forwarding messages between nodes and handelling client request 
+
+````PORT+1```` is a TCP Port; used exclusively for coordinator to coordinator communications
+
+````PORT+2````  is a UDP Port for high throughput key migration 
+
+````PORT+3````  is a UDP Port for high throughput gossipe messeging service 
+
+
+
+Transport layer has listener daemons on each of these ports with chans to forward those messages
+
+in order to send these messages we use a function call.
+
+
+
 ### Storage Service
 The storage service module maintains a map based key-value store, and executes consistent hasing for key distribution amongst nodes using SHA256.
 
@@ -58,6 +77,8 @@ Although inefficient when we scale, we implemented this algorithm because the ma
 
 We implemented two timeouts to be more tolerant to packet losses. If we removed nodes when the node detects for failures every ***T_fail*** ms, there is a chance that a heartbeat is not received due to packet loss or because by chance, the sender did not choose to send to this node.
 By having a cleanup period ***T_cleanup*** >>> ***T_fail***, we can build more confidence that a node has truly failied. 
+
+![alt text](/images/JOIN.jpg)
 
 // ADDED:
 To handle failure:
