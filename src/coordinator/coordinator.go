@@ -87,6 +87,8 @@ func (coordinator *CoordinatorService) processIncomingMessages() {
 	for {
 		// retrieve incoming message
 		incomingMessage := <-coordinator.incomingMessagesChannel
+		// fmt.Printf("[Coordinator] [Info] incoming message backlog size: %d\n", len(coordinator.incomingMessagesChannel))
+
 		kvRequest := &protobuf.KVRequest{}
 		err := proto.Unmarshal(incomingMessage.KVRequest, kvRequest)
 		if err != nil {

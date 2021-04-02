@@ -14,8 +14,6 @@ import (
 	"strings"
 	"time"
 
-	guuid "github.com/google/uuid"
-
 	"github.com/golang/protobuf/proto"
 	"github.com/google/uuid"
 	"github.com/pmylund/go-cache"
@@ -56,7 +54,6 @@ type Message struct {
 type TransportModule struct {
 	connection                 *net.UDPConn
 	storageToStorageConnection *net.TCPListener
-	R2Rconnection              *net.UDPConn
 	G2Gconnection              *net.UDPConn
 
 	heartbeatChanel chan []byte
@@ -81,15 +78,12 @@ func New(ip string, clientToServerPort int, gmsChan chan []byte, coordinatorChan
 	tm.clientToServerPort = strconv.Itoa(clientToServerPort)
 	tm.storageToStoragePort = strconv.Itoa(clientToServerPort + 1)
 	tm.hostIPv4 = ip + ":" + tm.storageToStoragePort
-	R2R_PORT := clientToServerPort + 2
-	G2G_PORT :=clientToServerPort + 3
+	G2G_PORT := clientToServerPort + 3
 
-	r2rconn := createUDPConnection(ip, R2R_PORT)
 	tm.connection = createUDPConnection(ip, clientToServerPort)
 	tm.storageToStorageConnection = createTCPConnection(ip, tm.storageToStoragePort) // TODO: wtf is this?
-	tm.G2Gconnection=createUDPConnection(ip,G2G_PORT)
+	tm.G2Gconnection = createUDPConnection(ip, G2G_PORT)
 
-	tm.R2Rconnection = r2rconn
 	tm.coodinatorChan = coordinatorChannel
 	tm.heartbeatChanel = gmsChan
 	tm.storageChannel = storageChannel
@@ -297,7 +291,6 @@ func (tm *TransportModule) bootstrap() {
 
 	go tm.UDP_daemon()
 	go tm.processStorageToStorageMessages() // TODO: come up with better names for these daemons...
-	go tm.R2R_daemon()
 	go tm.G2G_daemon()
 }
 
@@ -511,8 +504,6 @@ func (tm *TransportModule) TCPSend(payload []byte, destAddr string) {
 	}
 }
 
-
-
 func (tm *TransportModule) CachedSendStorageToStorage(payload []byte, messageID string, destAddr string) {
 	cache_data([]byte(messageID), payload)
 	tm.Send(payload, []byte(messageID), destAddr)
@@ -549,6 +540,7 @@ func (tm *TransportModule) processStorageToStorageMessages() {
 		if internalMessage.Command == uint32(constants.ProcessMigratingHeadTableRequest) {
 			tm.coodinatorChan <- *internalMessage
 		} else {
+			// TODO: how can we send a request without a command set?
 			tm.storageChannel <- *internalMessage
 		}
 
@@ -576,19 +568,17 @@ func (tm *TransportModule) SendCoordinatorToCoordinator(payload []byte, messageI
 }
 
 //RAFT FUNCTIONS---------------------------------------------------------
-
 func (tm *TransportModule) SendStorageToStorage(storageMessage *protobuf.InternalMsg, destAddr string) error {
 	// TODO: consider using a separate port
 	// TODO: consider using a TCP port for higher throughput in milestone 3
-	log.Println("called SendStorageToStorage>>>>>>>>")
 	serializedMessage, err := proto.Marshal(storageMessage)
 	if err != nil {
 		return err
 	}
 
-	messageID:=[]byte(uuid.New().String())
-	checksum:=calculate_checksum(messageID,serializedMessage)
-	shell:=&protobuf.RepShell{
+	messageID := []byte(uuid.New().String())
+	checksum := calculate_checksum(messageID, serializedMessage)
+	shell := &protobuf.RepShell{
 		Message_ID: messageID,
 		Checksum:   checksum,
 		Payload:    serializedMessage,
@@ -597,7 +587,6 @@ func (tm *TransportModule) SendStorageToStorage(storageMessage *protobuf.Interna
 	if err != nil {
 		return err
 	}
-
 
 	splitDestinationAddress := strings.Split(destAddr, ":")
 	if len(splitDestinationAddress) != 2 {
@@ -624,46 +613,6 @@ func (tm *TransportModule) SendStorageToStorage(storageMessage *protobuf.Interna
 	tm.connection.WriteToUDP(serializedMessage_shell, addr)
 	return err
 }
-
-// a udp background function that reads the udp  byte buffer and calls the router
-func (tm *TransportModule) R2R_daemon() {
-
-	for {
-
-		buffer := make([]byte, 20100)
-		n, _, err := tm.R2Rconnection.ReadFromUDP(buffer)
-		for err != nil {
-			fmt.Println("listener failed - ", err)
-		}
-
-		payload := buffer[:n]
-		internal_unmarshalled:=&protobuf.RepShell{}
-		err=proto.Unmarshal(payload, internal_unmarshalled)
-
-		calculated_checksum:=calculate_checksum(internal_unmarshalled.Message_ID,internal_unmarshalled.Payload)
-
-		if(calculated_checksum!=internal_unmarshalled.Checksum) {
-			log.Println("[CHECKSUM ERROR]>>>>>>>>>>>>>>>>")
-			continue;
-		}
-		internalMessage := &protobuf.InternalMsg{}
-		err = proto.Unmarshal(internal_unmarshalled.Payload, internal_unmarshalled)
-		if err != nil {
-			log.Println("[Transport] Unable to marshal a storage-to-storage request. Ignoring this message")
-			continue
-		}
-
-		if internalMessage.Command == uint32(constants.ProcessMigratingHeadTableRequest) {
-			log.Println("HEREE [coodinatorChan]")
-			tm.coodinatorChan <- *internalMessage
-		} else {
-			log.Println("HEREE [storageChannel]")
-			tm.storageChannel <- *internalMessage
-		}
-	}
-
-}
-
 
 //three way replication-------------------------------------------------------------
 
@@ -704,32 +653,6 @@ func (tm *TransportModule) ReplicationRequest(payload []byte, destAddr string) e
 	return nil
 }
 
-
-func (tm *TransportModule) R2RSend(payload []byte, destAddr string) {
-	id := guuid.New()
-	messageID := []byte(id.String())
-
-	send_payload := &protobuf.RaftShell{
-		Message_ID: messageID,
-		Checksum:   []byte(strconv.FormatUint(calculate_checksum(messageID, payload), 10)),
-		Payload:    payload,
-		Type:       "general",
-	}
-	addr, err := net.ResolveUDPAddr("udp", destAddr)
-	//fmt.Println("SENDING MESSAGE......")
-	//fmt.Println(send_payload)
-
-	if err != nil {
-		log.Println("Address error ", err)
-	}
-	marshalled_send_payload, err := proto.Marshal(send_payload)
-	if err != nil {
-		fmt.Println("[CRITICAL] Casting error R2RSend")
-	}
-	tm.connection.WriteToUDP(marshalled_send_payload, addr)
-}
-
-
 // NEW PORT FOR GMS-------------------------------------------
 
 func (tm *TransportModule) G2G_daemon() {
@@ -764,7 +687,6 @@ func (tm *TransportModule) SendHeartbeat(heartbeat *protobuf.MembershipReq, dest
 	}
 	destinationStorageToStoragePort := strconv.Itoa(destinationClientPort + 3) // TODO: create a function for this to remove duplicated magic constants
 	destinationIPv4 := destinationAddress + ":" + destinationStorageToStoragePort
-
 
 	addr, err := net.ResolveUDPAddr("udp", destinationIPv4)
 	if err != nil {
