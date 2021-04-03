@@ -82,12 +82,12 @@ func New(ip string, clientToServerPort int, gmsChan chan []byte, coordinatorChan
 	tm.storageToStoragePort = strconv.Itoa(clientToServerPort + 1)
 	tm.hostIPv4 = ip + ":" + tm.storageToStoragePort
 	R2R_PORT := clientToServerPort + 2
-	G2G_PORT :=clientToServerPort + 3
+	G2G_PORT := clientToServerPort + 3
 
 	r2rconn := createUDPConnection(ip, R2R_PORT)
 	tm.connection = createUDPConnection(ip, clientToServerPort)
 	tm.storageToStorageConnection = createTCPConnection(ip, tm.storageToStoragePort) // TODO: wtf is this?
-	tm.G2Gconnection=createUDPConnection(ip,G2G_PORT)
+	tm.G2Gconnection = createUDPConnection(ip, G2G_PORT)
 
 	tm.R2Rconnection = r2rconn
 	tm.coodinatorChan = coordinatorChannel
@@ -96,11 +96,7 @@ func New(ip string, clientToServerPort int, gmsChan chan []byte, coordinatorChan
 	tm.raftChan = raftChan
 	go tm.bootstrap()
 
-	// TODO: listen to TCP
-	go proportionalCollector()
-
 	return tm, nil
-
 }
 
 // send function for sending a payload
@@ -125,45 +121,6 @@ func (tm *TransportModule) Send(payload []byte, messageID []byte, destAddr strin
 	}
 
 	tm.connection.WriteToUDP(message, addr)
-}
-
-//------------------------------------------
-
-//optimizations----------------------------
-// auto scaling collector that adjusts its collection rate wrt how much memory it has left
-// like a P controller in control systems engineering
-// the proportionalCollector will increase the number of GC calls when the memory is low
-func proportionalCollector() {
-	var sleepCtr time.Duration = 1000 * time.Millisecond
-	for {
-		time.Sleep(sleepCtr)
-		sleepCtr = sleepCurve()
-		runtime.GC()
-	}
-}
-
-// helper funciton for proportionalCollector
-// sets the GC sleep rate
-func sleepCurve() time.Duration {
-	var m runtime.MemStats
-	runtime.ReadMemStats(&m)
-	currentMem := bToMb((m.Alloc))
-	//fmt.Println(currentMem)
-	if currentMem < 20 {
-		return 5 * time.Second
-	} else if currentMem < 30 {
-		return 100 * time.Millisecond
-	} else if currentMem < 40 {
-		return 50 * time.Millisecond
-	} else if currentMem < 50 {
-		return 10 * time.Millisecond
-	} else if currentMem < 80 {
-		//fmt.Println("CRITICAL MEMORY")
-		return time.Millisecond
-	} else {
-		//fmt.Println("[SUPER] CRITICAL MEMORY")
-		return 100 * time.Microsecond
-	}
 }
 
 //-----------------------------------------
@@ -511,8 +468,6 @@ func (tm *TransportModule) TCPSend(payload []byte, destAddr string) {
 	}
 }
 
-
-
 func (tm *TransportModule) CachedSendStorageToStorage(payload []byte, messageID string, destAddr string) {
 	cache_data([]byte(messageID), payload)
 	tm.Send(payload, []byte(messageID), destAddr)
@@ -586,9 +541,9 @@ func (tm *TransportModule) SendStorageToStorage(storageMessage *protobuf.Interna
 		return err
 	}
 
-	messageID:=[]byte(uuid.New().String())
-	checksum:=calculate_checksum(messageID,serializedMessage)
-	shell:=&protobuf.RepShell{
+	messageID := []byte(uuid.New().String())
+	checksum := calculate_checksum(messageID, serializedMessage)
+	shell := &protobuf.RepShell{
 		Message_ID: messageID,
 		Checksum:   checksum,
 		Payload:    serializedMessage,
@@ -597,7 +552,6 @@ func (tm *TransportModule) SendStorageToStorage(storageMessage *protobuf.Interna
 	if err != nil {
 		return err
 	}
-
 
 	splitDestinationAddress := strings.Split(destAddr, ":")
 	if len(splitDestinationAddress) != 2 {
@@ -637,14 +591,14 @@ func (tm *TransportModule) R2R_daemon() {
 		}
 
 		payload := buffer[:n]
-		internal_unmarshalled:=&protobuf.RepShell{}
-		err=proto.Unmarshal(payload, internal_unmarshalled)
+		internal_unmarshalled := &protobuf.RepShell{}
+		err = proto.Unmarshal(payload, internal_unmarshalled)
 
-		calculated_checksum:=calculate_checksum(internal_unmarshalled.Message_ID,internal_unmarshalled.Payload)
+		calculated_checksum := calculate_checksum(internal_unmarshalled.Message_ID, internal_unmarshalled.Payload)
 
-		if(calculated_checksum!=internal_unmarshalled.Checksum) {
+		if calculated_checksum != internal_unmarshalled.Checksum {
 			log.Println("[CHECKSUM ERROR]>>>>>>>>>>>>>>>>")
-			continue;
+			continue
 		}
 		internalMessage := &protobuf.InternalMsg{}
 		err = proto.Unmarshal(internal_unmarshalled.Payload, internal_unmarshalled)
@@ -663,7 +617,6 @@ func (tm *TransportModule) R2R_daemon() {
 	}
 
 }
-
 
 //three way replication-------------------------------------------------------------
 
@@ -704,7 +657,6 @@ func (tm *TransportModule) ReplicationRequest(payload []byte, destAddr string) e
 	return nil
 }
 
-
 func (tm *TransportModule) R2RSend(payload []byte, destAddr string) {
 	id := guuid.New()
 	messageID := []byte(id.String())
@@ -728,7 +680,6 @@ func (tm *TransportModule) R2RSend(payload []byte, destAddr string) {
 	}
 	tm.connection.WriteToUDP(marshalled_send_payload, addr)
 }
-
 
 // NEW PORT FOR GMS-------------------------------------------
 
@@ -764,7 +715,6 @@ func (tm *TransportModule) SendHeartbeat(heartbeat *protobuf.MembershipReq, dest
 	}
 	destinationStorageToStoragePort := strconv.Itoa(destinationClientPort + 3) // TODO: create a function for this to remove duplicated magic constants
 	destinationIPv4 := destinationAddress + ":" + destinationStorageToStoragePort
-
 
 	addr, err := net.ResolveUDPAddr("udp", destinationIPv4)
 	if err != nil {
