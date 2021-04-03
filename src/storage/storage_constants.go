@@ -1,6 +1,6 @@
 package storage
 
-const NUM_KVREQUEST_WORKERS = 16
+const NUM_KVREQUEST_WORKERS = 1
 
 //CONTROL PANEL----------------------------
 const STORE_SIZE_MB = 100 // memory HARD LIMIT
