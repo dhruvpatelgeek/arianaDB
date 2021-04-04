@@ -27,7 +27,7 @@ func main() {
 	}
 
 	// construct channels to communicate between transport layer and application layer
-	gmsChannel := make(chan []byte, 2)
+	gmsChannel := make(chan []byte, 1000)
 
 	// construct channels for intra-node service communication
 	gmsToCoordinatorChannel := make(chan membership.GMSEventMessage, 10000)
