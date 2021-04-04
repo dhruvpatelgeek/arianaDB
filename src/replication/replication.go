@@ -64,12 +64,13 @@ func (rs *ReplicationService) findPredecessorFromHash(hash *big.Int) string {
 
 	responsibleNode := nodeList[0]
 	increment := big.NewInt(1)
-	diff := hashDifference(increment.Add(hash, increment), structure.HashKey(responsibleNode))
+	diff := hashDifference(increment.Add(structure.HashKey(responsibleNode), increment), structure.HashKey(responsibleNode))
 
 	// Find node responsible for given key
 	for _, currNode := range nodeList {
+		currNodeHash := structure.HashKey(currNode)
 		currDiff := hashDifference(structure.HashKey(currNode), hash)
-		if currDiff.Cmp(diff) == LESS && currDiff.Cmp(big.NewInt(0)) != EQUAL {
+		if currDiff.Cmp(diff) == LESS && currNodeHash.Cmp(hash) != EQUAL {
 			diff = currDiff
 			responsibleNode = currNode
 		}

@@ -4,8 +4,10 @@ import (
 	"dht/google_protocol_buffer/pb/protobuf"
 	"dht/src/constants"
 	"errors"
+	"log"
 
 	"dht/src/membership"
+	"dht/src/processWrite"
 	"dht/src/replication"
 	"dht/src/storage"
 	"dht/src/transport"
@@ -39,6 +41,7 @@ type CoordinatorService struct {
 	transport               *transport.TransportModule
 	replicationService      *replication.ReplicationService
 	storageService          *storage.StorageService
+	writeManager            *processWrite.ProcessWrite
 
 	hostname string
 	hostport string
@@ -76,10 +79,12 @@ func New(
 
 	coordinator.gms = gms
 
+	coordinator.writeManager = processWrite.New()
+
 	// bootstrap worker threads for processing incoming messages & gms events
 	go coordinator.processIncomingMessages()
 	go coordinator.processGMSEvent()
-
+	//coordinator.tempTest();
 	return coordinator, nil
 }
 
@@ -103,6 +108,10 @@ func (coordinator *CoordinatorService) processIncomingMessages() {
 
 		case constants.ProcessPropagatedKVRequest:
 			coordinator.processPropagatedRequest(incomingMessage, kvRequest)
+		case constants.LogKVRequest:
+			coordinator.processLogRequest(incomingMessage)
+		case constants.CommitKVRequest:
+			coordinator.processCommitRequest(incomingMessage, kvRequest)
 
 		case constants.ProcessMigratingHeadTableRequest:
 			middleTableDestination := incomingMessage.GetReplicateMiddleTableDestination()
@@ -130,7 +139,11 @@ func (coordinator *CoordinatorService) processClientRequest(incomingMessage prot
 
 	storageCommand := kvRequest.GetCommand()
 	if selfIP := coordinator.hostIPv4; destinationAddress == selfIP {
-		if storageCommand == GET {
+		if isUpdateRequest(kvRequest) {
+			incomingMessage.Command = uint32(constants.LogKVRequest)
+			coordinator.processLogRequest(incomingMessage)
+			return
+		} else if storageCommand == GET {
 			sendGetResponseToClient := true
 			incomingMessage.RespondToClient = &sendGetResponseToClient
 			coordinator.toStorageChannel <- incomingMessage
@@ -152,11 +165,22 @@ func (coordinator *CoordinatorService) processClientRequest(incomingMessage prot
 	}
 
 	outgoingMessage := incomingMessage
-	outgoingMessage.Command = uint32(constants.ProcessPropagatedKVRequest)
 	outgoingMessage.DestinationNodeTable = &destinationTable
 	outgoingMessage.RespondToClient = &respondToClient
 
+	if isUpdateRequest(kvRequest) {
+		outgoingMessage.Command = uint32(constants.LogKVRequest)
+	} else {
+		//log.Print("[propogate request hit] 7uh7u")
+		outgoingMessage.Command = uint32(constants.ProcessPropagatedKVRequest)
+	}
+
 	coordinator.propagateRequest(outgoingMessage, destinationAddress)
+}
+
+func isUpdateRequest(kvRequest *protobuf.KVRequest) bool {
+	command := kvRequest.GetCommand()
+	return command == PUT || command == REMOVE || command == WIPEOUT
 }
 
 // Handles any requests that have been forwarded by other nodes, and forwards the request if necessary
@@ -182,6 +206,113 @@ func (coordinator *CoordinatorService) processPropagatedRequest(incomingMessage 
 			coordinator.propagateRequest(outgoingMessage, destinationAddress)
 		}
 	}
+}
+
+func (coordinator *CoordinatorService) processCommitRequest(incomingMessage protobuf.InternalMsg, kvRequest *protobuf.KVRequest) {
+	request, commit := coordinator.writeManager.Commit(incomingMessage)
+	currTable := incomingMessage.GetDestinationNodeTable()
+	if commit && currTable == uint32(constants.Head) {
+		coordinator.sendCommitsToBackups(incomingMessage)
+		responseToClient := true
+		request.RespondToClient = &responseToClient
+		coordinator.toStorageChannel <- request
+	} else if commit {
+		coordinator.toStorageChannel <- request
+	}
+
+}
+
+func (coordinator *CoordinatorService) sendCommitsToBackups(incomingMessage protobuf.InternalMsg) {
+	destinationTable := uint32(constants.Middle)
+	command := uint32(constants.CommitKVRequest)
+	respondToClient := false
+
+	outgoingMessage := incomingMessage
+	outgoingMessage.DestinationNodeTable = &destinationTable
+	outgoingMessage.Command = command
+	outgoingMessage.RespondToClient = &respondToClient
+	coordinator.sendToSuccessor(outgoingMessage)
+
+	destinationTable = uint32(constants.Tail)
+
+	outgoingMessage.DestinationNodeTable = &destinationTable
+	coordinator.sendToGrandSuccessor(outgoingMessage)
+}
+
+func (coordinator *CoordinatorService) processLogRequest(incomingMessage protobuf.InternalMsg) {
+
+	currTable := incomingMessage.GetDestinationNodeTable()
+	if currTable == uint32(constants.Head) {
+		coordinator.writeManager.Log(incomingMessage, 2)
+
+		coordinator.sendLogsToBackups(incomingMessage)
+	} else {
+		coordinator.writeManager.Log(incomingMessage, 1)
+		coordinator.sendCommitToPrimary(incomingMessage)
+	}
+}
+
+func (coordinator *CoordinatorService) sendCommitToPrimary(incomingMessage protobuf.InternalMsg) {
+	currTable := incomingMessage.GetDestinationNodeTable()
+	destinationTable := uint32(constants.Head)
+	command := uint32(constants.CommitKVRequest)
+	outgoingMessage := incomingMessage
+	outgoingMessage.DestinationNodeTable = &destinationTable
+	outgoingMessage.Command = command
+
+	if currTable == uint32(constants.Middle) {
+		coordinator.sendToPredecessor(outgoingMessage)
+	} else if currTable == uint32(constants.Tail) {
+		coordinator.sendToGrandPredecessor(outgoingMessage)
+	} else {
+		log.Print("[ERROR] NOT MIDDEL OR TAIL 67gh7iub ")
+	}
+
+}
+
+func (coordinator *CoordinatorService) sendLogsToBackups(incomingMessage protobuf.InternalMsg) {
+	// Send to successor
+	destinationTable := uint32(constants.Middle)
+	command := uint32(constants.LogKVRequest)
+	respondToClient := false
+
+	outgoingMessage := incomingMessage
+	outgoingMessage.DestinationNodeTable = &destinationTable
+	outgoingMessage.Command = command
+	outgoingMessage.RespondToClient = &respondToClient
+	coordinator.sendToSuccessor(outgoingMessage)
+
+	// Send to Grand successor
+	destinationTable = uint32(constants.Tail)
+
+	outgoingMessage.DestinationNodeTable = &destinationTable
+	coordinator.sendToGrandSuccessor(outgoingMessage)
+}
+
+func (coordinator *CoordinatorService) sendToSuccessor(outgoingMessage protobuf.InternalMsg) {
+	destinationAddress := coordinator.replicationService.FindSuccessorNode(coordinator.hostIPv4)
+
+	coordinator.propagateRequest(outgoingMessage, destinationAddress)
+}
+
+func (coordinator *CoordinatorService) sendToGrandSuccessor(outgoingMessage protobuf.InternalMsg) {
+	successor := coordinator.replicationService.FindSuccessorNode(coordinator.hostIPv4)
+	destinationAddress := coordinator.replicationService.FindSuccessorNode(successor)
+
+	coordinator.propagateRequest(outgoingMessage, destinationAddress)
+}
+
+func (coordinator *CoordinatorService) sendToPredecessor(outgoingMessage protobuf.InternalMsg) {
+	destinationAddress := coordinator.replicationService.FindPredecessorNode(coordinator.hostIPv4)
+
+	coordinator.propagateRequest(outgoingMessage, destinationAddress)
+}
+
+func (coordinator *CoordinatorService) sendToGrandPredecessor(outgoingMessage protobuf.InternalMsg) {
+	predecessor := coordinator.replicationService.FindPredecessorNode(coordinator.hostIPv4)
+	destinationAddress := coordinator.replicationService.FindPredecessorNode(predecessor)
+
+	coordinator.propagateRequest(outgoingMessage, destinationAddress)
 }
 
 // Sends a message to another node with the given ip address (destinationAddress).
