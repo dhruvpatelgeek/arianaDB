@@ -18,7 +18,7 @@ import (
 
 	"github.com/golang/protobuf/proto"
 	"github.com/google/uuid"
-	"github.com/pmylund/go-cache"
+	"github.com/hashicorp/golang-lru"
 )
 
 //REFRENCES--------------------------------
@@ -129,44 +129,28 @@ func (tm *TransportModule) Send(payload []byte, messageID []byte, destAddr strin
 
 // Create a cache with a default expiration time of 5 seconds, and which
 // purges expired items every 1 seconds
-var message_cache = cache.New(5*time.Second, 1*time.Nanosecond)
+var message_cache, err = lru.New(1000);
 
 // check if the data is in the cache if it is return true and the cache value
+// check if the data is in the cache if it is return true and the cache value
 func check_cache(message_id []byte) ([]byte, bool) {
-	if debug {
-		fmt.Println("checking cache...")
-	}
-	response, found := message_cache.Get(string(message_id))
+	if(message_cache.Contains(string(message_id))){
 
-	if !found {
-		if debug {
-			fmt.Println("not found...")
+		value,valid:=message_cache.Get(string(message_id))
+		if valid {
+			response:=value.([]byte)
+			return response,true
 		}
-		return nil, false
-	} else {
-		if debug {
-			fmt.Println("found...")
-		}
-		str := fmt.Sprintf("%v", response)
-		var cached_data = []byte(str)
-
-		return cached_data, true
 	}
+
+	return nil,false
+
 }
+
 
 // puts the data into the cache
 func cache_data(message_id []byte, data []byte) bool {
-	if get_mem_usage() > uint64(MEMORY_LIMIT-20) {
-		return true
-		fmt.Println("\n[MEMORY WARNING]\n")
-		message_cache.Flush()
-	}
-	if get_mem_usage() > uint64(MEMORY_LIMIT/2) {
-		fmt.Println("\n[MEMORY WARNING 50%]\n")
-		message_cache.DeleteExpired()
-	}
-
-	message_cache.Set(string(message_id), string(data), cache.DefaultExpiration)
+	message_cache.Add(string(message_id),data);
 	return true
 }
 
