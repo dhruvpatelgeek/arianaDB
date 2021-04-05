@@ -10,11 +10,12 @@ import (
 )
 
 // TODO: maybe put all the common non-class functions in here?
-func createInsertMigratedKeyRequest(key string, value []byte, destinationTable constants.TableSelection) (*protobuf.InternalMsg, error) {
+func createInsertMigratedKeyRequest(key string, value storeValue, destinationTable constants.TableSelection) (*protobuf.InternalMsg, error) {
 	kvRequest := &protobuf.KVRequest{
 		Command: PUT,
 		Key:     []byte(key),
-		Value:   value,
+		Value:   value.value,
+		Version: &value.version,
 	}
 	serializedKVRequest, err := proto.Marshal(kvRequest)
 	if err != nil {

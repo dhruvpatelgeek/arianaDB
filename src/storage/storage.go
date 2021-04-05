@@ -26,16 +26,21 @@ import (
 //https://stackoverflow.com/questions/31879817/golang-os-exec-realtime-memory-usage
 //https://golangcode.com/print-the-current-memory-usage/
 
+type storeValue struct {
+	value   []byte
+	version int32
+}
+
 type StorageService struct {
 	hostIpv4 string
 	// replicated kv stores
-	headKVStore     map[string][]byte
+	headKVStore     map[string]storeValue
 	headKVStoreLock *sync.Mutex
 
-	middleKVStore     map[string][]byte
+	middleKVStore     map[string]storeValue
 	middleKVStoreLock *sync.Mutex
 
-	tailKVStore     map[string][]byte
+	tailKVStore     map[string]storeValue
 	tailKVStoreLock *sync.Mutex
 
 	tm  *transport.TransportModule
@@ -58,13 +63,13 @@ func New(
 
 	sm := StorageService{
 		hostIpv4:        hostname + ":" + hostport,
-		headKVStore:     make(map[string][]byte),
+		headKVStore:     make(map[string]storeValue),
 		headKVStoreLock: &sync.Mutex{},
 
-		middleKVStore:     make(map[string][]byte),
+		middleKVStore:     make(map[string]storeValue),
 		middleKVStoreLock: &sync.Mutex{},
 
-		tailKVStore:     make(map[string][]byte),
+		tailKVStore:     make(map[string]storeValue),
 		tailKVStoreLock: &sync.Mutex{},
 
 		tm:  tm,
@@ -108,7 +113,11 @@ func (sm *StorageService) processStorageToStorageMessages() {
 			// TODO: Should follow the same pattern using processClientKVRequest & processPropagatedKVRequest
 			switch kvCommand := kvRequest.GetCommand(); kvCommand {
 			case PUT:
-				_ = sm.put(kvStore, kvStoreLock, kvRequest.GetKey(), kvRequest.GetValue())
+				var storeVal = storeValue{
+					value:   kvRequest.GetValue(),
+					version: kvRequest.GetVersion(),
+				}
+				_ = sm.put(kvStore, kvStoreLock, kvRequest.GetKey(), storeVal)
 			case WIPEOUT:
 				fmt.Printf("[Storage] Received wipeout command from (TODO) to wipe my table :%d\n", tableSelection)
 				_ = sm.wipeout(tableSelection)
@@ -205,7 +214,7 @@ func (sm *StorageService) MigratePartialTable(destination string,
 	return nil
 }
 
-func (sm *StorageService) getKVStore(tableSelection constants.TableSelection) (map[string][]byte, *sync.Mutex, error) {
+func (sm *StorageService) getKVStore(tableSelection constants.TableSelection) (map[string]storeValue, *sync.Mutex, error) {
 	switch tableSelection {
 	case constants.Head:
 		return sm.headKVStore, sm.headKVStoreLock, nil
@@ -224,8 +233,8 @@ throws an error if it was unable to migrate the key.
 - assumes callee already holds the lock to sm.kvStore
 */
 func (sm *StorageService) migrateKey(
-	kvStore map[string][]byte,
-	key string, value []byte,
+	kvStore map[string]storeValue,
+	key string, value storeValue,
 	destination string, destinationTable constants.TableSelection) error {
 
 	internalMessage, err := createInsertMigratedKeyRequest(key, value, destinationTable)
@@ -375,13 +384,18 @@ func (sm *StorageService) processKVRequest(request *protobuf.InternalMsg) error 
 	}
 
 	var errCode uint32
-	var value []byte
+	var value storeValue
 	var pid int32
+	var membershipCount int32
 
 	if getCurrMem() < MEM_LIM_MB {
 		switch cast_req.GetCommand() {
 		case PUT:
-			errCode = sm.put(kvStore, kvStoreLock, cast_req.GetKey(), cast_req.GetValue())
+			var storeVal = storeValue{
+				value:   cast_req.GetValue(),
+				version: cast_req.GetVersion(),
+			}
+			errCode = sm.put(kvStore, kvStoreLock, cast_req.GetKey(), storeVal)
 		case GET:
 			value, errCode = sm.get(kvStore, kvStoreLock, cast_req.Key)
 		case REMOVE:
@@ -395,7 +409,7 @@ func (sm *StorageService) processKVRequest(request *protobuf.InternalMsg) error 
 		case GET_PID:
 			pid, errCode = getpid()
 		case GET_MC:
-			_ = sm.getmemcount()
+			membershipCount = sm.getmemcount()
 		default:
 			errCode = UNKWN_CMD
 		}
@@ -410,9 +424,11 @@ func (sm *StorageService) processKVRequest(request *protobuf.InternalMsg) error 
 
 	if responseRequired {
 		kvres := &protobuf.KVResponse{
-			ErrCode: &errCode,
-			Value:   value,
-			Pid:     &pid,
+			ErrCode:         &errCode,
+			Value:           value.value,
+			Pid:             &pid,
+			Version:         &value.version,
+			MembershipCount: &membershipCount,
 		}
 
 		kvResponse, err := proto.Marshal(kvres)
@@ -427,15 +443,15 @@ func (sm *StorageService) processKVRequest(request *protobuf.InternalMsg) error 
 	return nil
 }
 
-func (sm *StorageService) put(kvStore map[string][]byte, kvStoreLock *sync.Mutex, key []byte, value []byte) uint32 {
-	if int(len(value)) > 10000 {
+func (sm *StorageService) put(kvStore map[string]storeValue, kvStoreLock *sync.Mutex, key []byte, valueToStore storeValue) uint32 {
+	if int(len(valueToStore.value)) > 10000 {
 		return INV_VAL
 	}
 
 	memSize := getCurrMem() // TODO: we read the memstats here (100 mb)
 	if memSize < uint64(STORE_SIZE_MB) {
 		kvStoreLock.Lock()
-		kvStore[string(key)] = value
+		kvStore[string(key)] = valueToStore
 		kvStoreLock.Unlock()
 	} else {
 		fmt.Println("[Storage] Fatal: not enough memory. ", memSize)
@@ -445,20 +461,20 @@ func (sm *StorageService) put(kvStore map[string][]byte, kvStoreLock *sync.Mutex
 	return OK
 }
 
-func (sm *StorageService) get(kvStore map[string][]byte, kvStoreLock *sync.Mutex, key []byte) ([]byte, uint32) {
+func (sm *StorageService) get(kvStore map[string]storeValue, kvStoreLock *sync.Mutex, key []byte) (storeValue, uint32) {
 	kvStoreLock.Lock()
-	value, found := kvStore[string(key)]
+	storedValue, found := kvStore[string(key)]
 	kvStoreLock.Unlock()
 
 	if !found {
 		log.Printf("[Storage] [Debug] Could not find key.\n")
-		return nil, NO_KEY
+		return storeValue{}, NO_KEY
 	}
 
-	return value, OK
+	return storedValue, OK
 }
 
-func (sm *StorageService) remove(kvStore map[string][]byte, kvStoreLock *sync.Mutex, key []byte) uint32 {
+func (sm *StorageService) remove(kvStore map[string]storeValue, kvStoreLock *sync.Mutex, key []byte) uint32 {
 	kvStoreLock.Lock()
 	_, found := kvStore[string(key)]
 	kvStoreLock.Unlock()
@@ -483,17 +499,17 @@ func (sm *StorageService) wipeout(tableSelection constants.TableSelection) uint3
 	switch tableSelection {
 	case constants.Head:
 		sm.headKVStoreLock.Lock()
-		sm.headKVStore = make(map[string][]byte)
+		sm.headKVStore = make(map[string]storeValue)
 		sm.headKVStoreLock.Unlock()
 
 	case constants.Middle:
 		sm.middleKVStoreLock.Lock()
-		sm.middleKVStore = make(map[string][]byte)
+		sm.middleKVStore = make(map[string]storeValue)
 		sm.middleKVStoreLock.Unlock()
 
 	case constants.Tail:
 		sm.tailKVStoreLock.Lock()
-		sm.tailKVStore = make(map[string][]byte)
+		sm.tailKVStore = make(map[string]storeValue)
 		sm.tailKVStoreLock.Unlock()
 
 	default:
