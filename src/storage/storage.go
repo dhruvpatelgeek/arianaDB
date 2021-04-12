@@ -182,6 +182,8 @@ func (sm *StorageService) MigratePartialTable(destination string,
 	}
 
 	kvStoreLock.Lock() // TODO: consider grabbing the lock sooner to prevent table modification
+	defer kvStoreLock.Unlock()
+
 	for key, value := range kvStore {
 		hashedKey := structure.HashKey(key)
 		switch isWrapAround {
@@ -209,7 +211,6 @@ func (sm *StorageService) MigratePartialTable(destination string,
 			}
 		}
 	}
-	kvStoreLock.Unlock()
 
 	return nil
 }
@@ -284,10 +285,10 @@ func (sm *StorageService) MigrateEntireTable(destination string,
 		return fmt.Errorf("[Storage] Failed to wipeout destination (%s) table (%d). \n Caused by: %s. \nAbsorting table migration.\n", destination, destinationTable, err.Error())
 	}
 	// migrate originating table to destination table
+	kvStoreLock.Lock()
+	defer kvStoreLock.Unlock()
 	for key, value := range kvStore {
-		kvStoreLock.Lock()
 		err := sm.migrateKey(kvStore, key, value, destination, destinationTable)
-		kvStoreLock.Unlock()
 		if err != nil {
 			fmt.Println("[Storage] Failed to migrate key during table migration. ", err.Error())
 		}
