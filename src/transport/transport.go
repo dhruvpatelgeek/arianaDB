@@ -18,7 +18,7 @@ import (
 
 	"github.com/golang/protobuf/proto"
 	"github.com/google/uuid"
-	"github.com/hashicorp/golang-lru"
+	lru "github.com/hashicorp/golang-lru"
 )
 
 //REFRENCES--------------------------------
@@ -585,7 +585,7 @@ func (tm *TransportModule) R2R_daemon() {
 			continue
 		}
 		internalMessage := &protobuf.InternalMsg{}
-		err = proto.Unmarshal(internal_unmarshalled.Payload, internal_unmarshalled)
+		err = proto.Unmarshal(internal_unmarshalled.Payload, internalMessage)
 		if err != nil {
 			log.Println("[Transport] Unable to marshal a storage-to-storage request. Ignoring this message")
 			continue
