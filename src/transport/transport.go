@@ -129,28 +129,27 @@ func (tm *TransportModule) Send(payload []byte, messageID []byte, destAddr strin
 
 // Create a cache with a default expiration time of 5 seconds, and which
 // purges expired items every 1 seconds
-var message_cache, err = lru.New(1000);
+var message_cache, err = lru.New(1000)
 
 // check if the data is in the cache if it is return true and the cache value
 // check if the data is in the cache if it is return true and the cache value
 func check_cache(message_id []byte) ([]byte, bool) {
-	if(message_cache.Contains(string(message_id))){
+	if message_cache.Contains(string(message_id)) {
 
-		value,valid:=message_cache.Get(string(message_id))
+		value, valid := message_cache.Get(string(message_id))
 		if valid {
-			response:=value.([]byte)
-			return response,true
+			response := value.([]byte)
+			return response, true
 		}
 	}
 
-	return nil,false
+	return nil, false
 
 }
 
-
 // puts the data into the cache
 func cache_data(message_id []byte, data []byte) bool {
-	message_cache.Add(string(message_id),data);
+	message_cache.Add(string(message_id), data)
 	return true
 }
 
@@ -519,7 +518,6 @@ func (tm *TransportModule) SendCoordinatorToCoordinator(payload []byte, messageI
 func (tm *TransportModule) SendStorageToStorage(storageMessage *protobuf.InternalMsg, destAddr string) error {
 	// TODO: consider using a separate port
 	// TODO: consider using a TCP port for higher throughput in milestone 3
-	log.Println("called SendStorageToStorage>>>>>>>>")
 	serializedMessage, err := proto.Marshal(storageMessage)
 	if err != nil {
 		return err
@@ -592,10 +590,8 @@ func (tm *TransportModule) R2R_daemon() {
 		}
 
 		if internalMessage.Command == uint32(constants.ProcessMigratingHeadTableRequest) {
-			log.Println("HEREE [coodinatorChan]")
 			tm.coodinatorChan <- *internalMessage
 		} else {
-			log.Println("HEREE [storageChannel]")
 			tm.storageChannel <- *internalMessage
 		}
 	}

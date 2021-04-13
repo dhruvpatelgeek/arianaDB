@@ -16,7 +16,6 @@ import (
 	"github.com/golang/protobuf/proto"
 )
 
-// TODO: consider moving the members list to its own file under the same package for cleanliness & atomic operations.
 type membersListValue struct {
 	isAlive            bool
 	heartbeatTimestamp int64
@@ -29,6 +28,8 @@ type MembershipService struct {
 	transport              *transport.TransportModule
 	receiveChannel         chan []byte
 	GMSEventMessageChannel chan GMSEventMessage
+
+	joined bool
 
 	// This should be recorded in case that the node "failed" to join a system.
 	initialMembers []string
@@ -73,6 +74,7 @@ func New(
 	}
 
 	gms.address = myAddress + ":" + myPort
+	gms.joined = false
 
 	// add itself to the membership
 	gms.membersListLock.Lock()
@@ -82,6 +84,9 @@ func New(
 	gms.GMSEventMessageChannel = GMSEventMessageChannel
 
 	gms.initialMembers = initialMembers
+	if len(initialMembers) == 0 {
+		gms.joined = true
+	}
 
 	// begin a thread for listening to the receive channel and processing messages
 	go gms.listenToReceiveChannel()
@@ -92,8 +97,6 @@ func New(
 	go gms.failCheck()
 	go gms.cleanup()
 	go gms.heartbeat()
-
-	//go gms.monitorMembership()
 
 	return gms, nil
 }
@@ -236,9 +239,18 @@ func (gms *MembershipService) processHeartbeat(request *protobuf.MembershipReq) 
 					EventType: Joined,
 					Nodes:     []string{address},
 				}
-				gms.GMSEventMessageChannel <- msg
+				if gms.joined {
+					gms.GMSEventMessageChannel <- msg
+				}
 			}
 		}
+
+	}
+
+	if !gms.joined {
+		fmt.Println("[GMS] Received address:", addresses)
+		fmt.Println("[GMS] Members ", gms.members)
+		gms.joined = true
 	}
 
 	gms.members[destination].heartbeatTimestamp = getCurrentTimeInMilliSec()
@@ -254,9 +266,11 @@ Assumes that at least one node
 func (gms *MembershipService) bootstrap() {
 	fmt.Println("[GMS] [Info] [Bootstrap]: sending join requests to initial members: ", gms.initialMembers)
 	for _, initialMember := range gms.initialMembers {
-		err := gms.sendHeartbeat(initialMember)
-		if err != nil {
-			fmt.Printf("[GMS] [Info] Failed to send a heartbeat to the initial member %s during bootstrap.\n", initialMember)
+		if initialMember != gms.address {
+			err := gms.sendHeartbeat(initialMember)
+			if err != nil {
+				fmt.Printf("[GMS] [Info] Failed to send a heartbeat to the initial member %s during bootstrap.\n", initialMember)
+			}
 		}
 	}
 }
@@ -330,13 +344,6 @@ func (gms *MembershipService) GetAllNodes() []string {
 	return allNodes
 }
 
-func (gms *MembershipService) monitorMembership() {
-	for {
-		time.Sleep(5 * time.Second)
-		fmt.Println("[GMS] [Info] members: ", gms.GetAllNodes())
-	}
-}
-
 func unmarshalMembershipRequest(list []byte) (*protobuf.MembershipReq, error) {
 	MReq := &protobuf.MembershipReq{}
 	err := proto.Unmarshal(list, MReq)
@@ -348,7 +355,7 @@ func unmarshalMembershipRequest(list []byte) (*protobuf.MembershipReq, error) {
 
 func createNewMembersListValue() *membersListValue {
 	val := membersListValue{
-		isAlive:            false,
+		isAlive:            true,
 		heartbeatTimestamp: 0,
 	}
 	return &val

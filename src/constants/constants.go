@@ -9,7 +9,6 @@ const (
 	CommitKVRequest
 	ProcessStorageToStorageKVRequest
 
-	// don't know if we need this:
 	SplitTableRequest
 
 	ProcessHeadTableMigrationRequest

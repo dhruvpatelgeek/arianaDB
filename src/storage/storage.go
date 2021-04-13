@@ -238,6 +238,7 @@ func (sm *StorageService) migrateKey(
 	key string, value storeValue,
 	destination string, destinationTable constants.TableSelection) error {
 
+	time.Sleep(1 * time.Millisecond)
 	internalMessage, err := createInsertMigratedKeyRequest(key, value, destinationTable)
 	if err != nil {
 		return err

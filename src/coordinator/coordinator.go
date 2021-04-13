@@ -17,22 +17,8 @@ import (
 	"google.golang.org/protobuf/proto"
 )
 
-// Storage Command numbers
-const PUT = 1
-const GET = 2
-const REMOVE = 3
-const SHUTDOWN = 4
-const WIPEOUT = 5
-const IS_ALIVE = 6
-const GET_PID = 7
-const GET_MC = 8
-
 /** CoordinatorService is responsible for responding to external inputs (i.e.: client-to-server requests,
 server-to-server requests) and internal inputs (gms events).
-
-TODO: add some comments on how forwarding and propagation works.
-
-TODO: add some comments on how node joins & fails are handled.
 */
 type CoordinatorService struct {
 	gmsEventChannel         chan membership.GMSEventMessage
@@ -84,7 +70,6 @@ func New(
 	// bootstrap worker threads for processing incoming messages & gms events
 	go coordinator.processIncomingMessages()
 	go coordinator.processGMSEvent()
-	//coordinator.tempTest();
 	return coordinator, nil
 }
 
@@ -92,7 +77,6 @@ func (coordinator *CoordinatorService) processIncomingMessages() {
 	for {
 		// retrieve incoming message
 		incomingMessage := <-coordinator.incomingMessagesChannel
-		// fmt.Printf("[Coordinator] [Info] incoming message backlog size: %d\n", len(coordinator.incomingMessagesChannel))
 
 		kvRequest := &protobuf.KVRequest{}
 		err := proto.Unmarshal(incomingMessage.KVRequest, kvRequest)
@@ -143,7 +127,7 @@ func (coordinator *CoordinatorService) processClientRequest(incomingMessage prot
 			incomingMessage.Command = uint32(constants.LogKVRequest)
 			coordinator.processLogRequest(incomingMessage)
 			return
-		} else if storageCommand == GET {
+		} else if storageCommand == storage.GET {
 			sendGetResponseToClient := true
 			incomingMessage.RespondToClient = &sendGetResponseToClient
 			coordinator.toStorageChannel <- incomingMessage
@@ -156,11 +140,11 @@ func (coordinator *CoordinatorService) processClientRequest(incomingMessage prot
 	}
 
 	// Don't propagate shutdowns
-	if storageCommand == SHUTDOWN {
+	if storageCommand == storage.SHUTDOWN {
 		return
 	}
 
-	if destinationTable == uint32(constants.Head) && storageCommand == GET {
+	if destinationTable == uint32(constants.Head) && storageCommand == storage.GET {
 		respondToClient = true
 	}
 
@@ -171,23 +155,23 @@ func (coordinator *CoordinatorService) processClientRequest(incomingMessage prot
 	if isUpdateRequest(kvRequest) {
 		outgoingMessage.Command = uint32(constants.LogKVRequest)
 	} else {
-		//log.Print("[propogate request hit] 7uh7u")
 		outgoingMessage.Command = uint32(constants.ProcessPropagatedKVRequest)
 	}
 
 	coordinator.propagateRequest(outgoingMessage, destinationAddress)
 }
 
+// Checks if the given request updates the KV Store
 func isUpdateRequest(kvRequest *protobuf.KVRequest) bool {
 	command := kvRequest.GetCommand()
-	return command == PUT || command == REMOVE || command == WIPEOUT
+	return command == storage.PUT || command == storage.REMOVE || command == storage.WIPEOUT
 }
 
 // Handles any requests that have been forwarded by other nodes, and forwards the request if necessary
 func (coordinator *CoordinatorService) processPropagatedRequest(incomingMessage protobuf.InternalMsg, kvRequest *protobuf.KVRequest) {
 	coordinator.toStorageChannel <- incomingMessage
 
-	if kvRequest.GetCommand() != GET {
+	if kvRequest.GetCommand() != storage.GET {
 		currTable := incomingMessage.GetDestinationNodeTable()
 		if constants.TableSelection(currTable) != constants.Tail {
 			destinationAddress := coordinator.replicationService.FindSuccessorNode(coordinator.hostIPv4)
@@ -208,6 +192,7 @@ func (coordinator *CoordinatorService) processPropagatedRequest(incomingMessage 
 	}
 }
 
+// Sends a request to the storage layer when the appropriate number of commit messages has been received
 func (coordinator *CoordinatorService) processCommitRequest(incomingMessage protobuf.InternalMsg, kvRequest *protobuf.KVRequest) {
 	request, commit := coordinator.writeManager.Commit(incomingMessage)
 	currTable := incomingMessage.GetDestinationNodeTable()
@@ -222,25 +207,29 @@ func (coordinator *CoordinatorService) processCommitRequest(incomingMessage prot
 
 }
 
+// Finds the current node's backup nodes (successor and grand successor),
+// and sends a commit message to each of them
 func (coordinator *CoordinatorService) sendCommitsToBackups(incomingMessage protobuf.InternalMsg) {
 	destinationTable := uint32(constants.Middle)
 	command := uint32(constants.CommitKVRequest)
 	respondToClient := false
 
+	// Send message so the backup commits the request (successor)
 	outgoingMessage := incomingMessage
 	outgoingMessage.DestinationNodeTable = &destinationTable
 	outgoingMessage.Command = command
 	outgoingMessage.RespondToClient = &respondToClient
 	coordinator.sendToSuccessor(outgoingMessage)
 
+	// Sends message so the backup commits the request (grand successor)
 	destinationTable = uint32(constants.Tail)
 
 	outgoingMessage.DestinationNodeTable = &destinationTable
 	coordinator.sendToGrandSuccessor(outgoingMessage)
 }
 
+// Logs requests that will be committed when a corresponding commit message is received in the future
 func (coordinator *CoordinatorService) processLogRequest(incomingMessage protobuf.InternalMsg) {
-
 	currTable := incomingMessage.GetDestinationNodeTable()
 	if currTable == uint32(constants.Head) {
 		coordinator.writeManager.Log(incomingMessage, 2)
@@ -252,6 +241,8 @@ func (coordinator *CoordinatorService) processLogRequest(incomingMessage protobu
 	}
 }
 
+// Sends a commit message to the primary node.
+// This is used by the backup nodes once they have logged a request from the primary node
 func (coordinator *CoordinatorService) sendCommitToPrimary(incomingMessage protobuf.InternalMsg) {
 	currTable := incomingMessage.GetDestinationNodeTable()
 	destinationTable := uint32(constants.Head)
@@ -270,6 +261,8 @@ func (coordinator *CoordinatorService) sendCommitToPrimary(incomingMessage proto
 
 }
 
+// Sends log messages to the two backup nodes (current node's successor and grand successor)
+// Used by the primary node when it receives a request from the client
 func (coordinator *CoordinatorService) sendLogsToBackups(incomingMessage protobuf.InternalMsg) {
 	// Send to successor
 	destinationTable := uint32(constants.Middle)
@@ -289,12 +282,14 @@ func (coordinator *CoordinatorService) sendLogsToBackups(incomingMessage protobu
 	coordinator.sendToGrandSuccessor(outgoingMessage)
 }
 
+// Finds the successor of the current node and sends the given message to it
 func (coordinator *CoordinatorService) sendToSuccessor(outgoingMessage protobuf.InternalMsg) {
 	destinationAddress := coordinator.replicationService.FindSuccessorNode(coordinator.hostIPv4)
 
 	coordinator.propagateRequest(outgoingMessage, destinationAddress)
 }
 
+// Finds the grand successor (successor's successor) of the current node and sends the given message to it
 func (coordinator *CoordinatorService) sendToGrandSuccessor(outgoingMessage protobuf.InternalMsg) {
 	successor := coordinator.replicationService.FindSuccessorNode(coordinator.hostIPv4)
 	destinationAddress := coordinator.replicationService.FindSuccessorNode(successor)
@@ -302,12 +297,14 @@ func (coordinator *CoordinatorService) sendToGrandSuccessor(outgoingMessage prot
 	coordinator.propagateRequest(outgoingMessage, destinationAddress)
 }
 
+// Finds the predecessor of the current node and sends the given message to it
 func (coordinator *CoordinatorService) sendToPredecessor(outgoingMessage protobuf.InternalMsg) {
 	destinationAddress := coordinator.replicationService.FindPredecessorNode(coordinator.hostIPv4)
 
 	coordinator.propagateRequest(outgoingMessage, destinationAddress)
 }
 
+// Finds the grand predecessor (the predecessor's predecessor) of the current node and sends the given message to it
 func (coordinator *CoordinatorService) sendToGrandPredecessor(outgoingMessage protobuf.InternalMsg) {
 	predecessor := coordinator.replicationService.FindPredecessorNode(coordinator.hostIPv4)
 	destinationAddress := coordinator.replicationService.FindPredecessorNode(predecessor)
@@ -332,7 +329,7 @@ func (coordinator *CoordinatorService) processGMSEvent() {
 		gmsEvent := <-coordinator.gmsEventChannel
 		eventType := gmsEvent.EventType
 
-		switch eventType { // TODO: define gmsEvent in a constant
+		switch eventType {
 		case membership.Joined:
 			err := coordinator.processJoinEvent(gmsEvent)
 			if err != nil {
@@ -362,7 +359,7 @@ func (self *CoordinatorService) processJoinEvent(gmsEvent membership.GMSEventMes
 	newNode := gmsEvent.Nodes[0]
 
 	// get self's heritage in relation to the new node
-	successor := self.replicationService.FindSuccessorNode(newNode) // TODO: for cleanliness later, consider using constants if self can only be one of the following
+	successor := self.replicationService.FindSuccessorNode(newNode)
 	predecessor := self.replicationService.FindPredecessorNode(newNode)
 	greatPredecessor := self.replicationService.FindPredecessorNode(predecessor)
 
@@ -505,8 +502,7 @@ The coordinator layer will ask the replication layer the relationship between th
 - otherwise do nothing
 */
 func (self *CoordinatorService) processFailEvent(gmsEvent membership.GMSEventMessage) error {
-	// merge local tables TODO:
-
+	// merge local tables
 	numNewNodes := len(gmsEvent.Nodes)
 	if numNewNodes <= 0 {
 		return fmt.Errorf("[Coordinator] [Error] Expected fail event message from GMS to contain at least 1 failed node. This failed event message contains the failed nodes: %v", gmsEvent.Nodes)
@@ -540,57 +536,6 @@ func (self *CoordinatorService) isSuccessorOfAnyFailNode(failedNodes []string) b
 	}
 
 	return false
-}
-
-// TO DELETE
-func (self *CoordinatorService) isPredecessorOfAnyFailNode(failedNodes []string) bool {
-
-	for _, failedNode := range failedNodes {
-		if self.hostIPv4 == self.replicationService.FindPredecessorNode(failedNode) {
-			return true
-		}
-	}
-
-	return false
-}
-
-// TO DELETE
-func (self *CoordinatorService) isGreatPredecessorOfAnyFailNode(failedNodes []string) bool {
-
-	for _, failedNode := range failedNodes {
-		if self.hostIPv4 == self.replicationService.FindPredecessorNode(self.replicationService.FindPredecessorNode(failedNode)) {
-			return true
-		}
-	}
-
-	return false
-}
-
-// TO DELETE
-func (coordinator *CoordinatorService) processFailReqGreatPredecessor() error {
-	successor := coordinator.replicationService.FindSuccessorNode(coordinator.hostIPv4)
-	greatSuccessor := coordinator.replicationService.FindSuccessorNode(successor)
-	err := coordinator.storageService.MigrateEntireTable(greatSuccessor, constants.Head, constants.Tail)
-	if err != nil {
-		return err
-	}
-	return nil
-}
-
-// TO DELETE
-func (coordinator *CoordinatorService) processFailReqPredecessor() error {
-	successor := coordinator.replicationService.FindSuccessorNode(coordinator.hostIPv4)
-	err := coordinator.storageService.MigrateEntireTable(successor, constants.Head, constants.Middle)
-	if err != nil {
-		return err
-	}
-
-	greatSuccessor := coordinator.replicationService.FindSuccessorNode(successor)
-	err = coordinator.storageService.MigrateEntireTable(greatSuccessor, constants.Head, constants.Tail)
-	if err != nil {
-		return err
-	}
-	return nil
 }
 
 /**
