@@ -1,9 +1,34 @@
 
+<img src="https://github.com/dhruvpatelgeek/arianaDB/blob/main/images/A13999_Aap%20Icon_DF.png" width="300">
 
-![](./images/A13999_Aap Icon_DF.png)
+ArianaDB is a lightweight, high-perfomance KV store, It uses consinstent hashing for KV distribution with hibari methord to provide leaderless linerizability, and load-balancing. It handles failues and rejoins really well.
+
+ArinanDB's codebase is simple and concise, you can fork it to implement any extra-features you wish, In order to install ArianaDB you will need to run arianaDB on >3 cloud nodes for the server (no minimum requirements) and a ArianaDB client on your service.
+
+
+### Specifications
+| Metric                      |                                                              |
+| --------------------------- | ------------------------------------------------------------ |
+| Consistency                 | Linearizibility                                              |
+| Replication type            | One Primary table + Two Backup tables (tables are sharded across 3 distinct nodes) |
+| Commit Mechanism            | 2 Phase Commit for writes                                    |
+| Recovery time from failures | ~10 seconds                                                  |
+| Protocol                    | UDP with at-most once (and two point checksum verification)  |
+| Scalable                    | yes (up to 2000 nodes)                                       |
+| Language                    | Golang                                                       |
+| Maximum Throughput          | (50% reads 50% writes on 1vCPU 1GB ram) ~15000 Requests/sec  |
+| Write Latency               | ~200 ms                                                      |
+| Read Latency                | ~63 ms                                                       |
+
+### Installation Instructions
+#### Server 
+1. Clone the repo
+2. Run ```go run src/main.go <port-number> <url to servers-file>```
+#### client 
+1. Clone the repo 
+2. Instantiate the client code into your system
 
 ### System Overview
-
 ![Basic system architecture](images/M2_Arch.png)
 
 Spirit of Fire's distributed hash table (DHT) is composed of 5 components: the transport layer, the storage component, the coordinator, the replication service, and the group membership service.
