@@ -1,6 +1,9 @@
 
 <img src="https://github.com/dhruvpatelgeek/arianaDB/blob/main/images/A13999_Aap%20Icon_DF.png" width="300">
 
+<img alt="GitHub repo size" src="https://img.shields.io/github/repo-size/dhruvpatelgeek/arianaDB?style=plastic"> <img alt="GitHub go.mod Go version (subdirectory of monorepo)" src="https://img.shields.io/github/go-mod/go-version/dhruvpatelgeek/arianaDB"> <img alt="GitHub contributors" src="https://img.shields.io/github/contributors/dhruvpatelgeek/arianaDB"> <img alt="GitHub commit activity" src="https://img.shields.io/github/commit-activity/y/dhruvpatelgeek/arianaDB">
+
+
 ArianaDB is a lightweight, high-perfomance KV store, It uses consinstent hashing for KV distribution with hibari methord to provide leaderless linerizability, and load-balancing. It handles failues and rejoins really well.
 
 ArinanDB's codebase is simple and concise, you can fork it to implement any extra-features you wish, In order to install ArianaDB you will need to run arianaDB on >3 cloud nodes for the server (no minimum requirements) and a ArianaDB client on your service.
