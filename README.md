@@ -1,19 +1,9 @@
-# Spirit of Fire: Distributed Hash Table
-Team members: Dhruv Patel, Caleb Sattler, Danny Lee, Patrick Huang
 
-##### Verification code : 2CE3F2F (check ./results/results.md for log)
 
-### Instructions
-1. To build the project, run the command: `docker build -t dht .`
-2. To run the project, run the command: `docker run --network host -p 7262/udp -v /root/mount:/etc/cpen431 dht ./dht-server 7262 /etc/cpen431/servers.txt &`
-    - For example, if servers.txt exists in "/root/mount/servers.txt" in the host, then run the command: `docker run --network host -p 7262/udp -v /root/mount:/etc/cpen431 dht ./dht-server 7262 /etc/cpen431/servers.txt &`
 
-### Special Note for Milestone 3
-In milestone 3, we implemented a primary-backup scheme to provide sequential consistency even in the case of node failures. This is a design decision we made as a team because our milestone 2 implementation was already mostly sequentially consistent and one of the primary deliverables of milestone 3 is to provide stronger sequential consistency; only in the event of failures was our system not sequentially consistent at the level of the keys. 
-
-In doing so, we sacrifice raw performance. Because our primary-backup is inspired by 2-phase commit, we are limited by the number of rounds the primary needs to communicate with its backup and the round-trip time. We have tried to optimize our code by using multiple workers to process kv requests, sending network calls on a child thread, and using pointer channels instead of protobuf channels to reduce the copy overhead when inserting and removing from the channel. However, all these attempts lowered our througput/goodput.
 
 ### System Overview
+
 ![Basic system architecture](images/M2_Arch.png)
 
 Spirit of Fire's distributed hash table (DHT) is composed of 5 components: the transport layer, the storage component, the coordinator, the replication service, and the group membership service.
